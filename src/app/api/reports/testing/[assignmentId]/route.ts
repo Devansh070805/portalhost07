@@ -1,9 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getFullReportData } from '../../../../../../services/reports'; // Adjust path
 import PDFDocument from 'pdfkit';
 import axios from 'axios';
 import path from 'path'; // <-- Requires 'path'
 import fs from 'fs';     // <-- Requires 'fs'
+
+export const runtime = 'nodejs';
 
 // --- START: TYPE DEFINITIONS ---
 // (Your interfaces are unchanged)
@@ -230,14 +232,14 @@ async function generateTestReport(assignmentId: string): Promise<{pdfBuffer: Buf
 
 // --- API handler ---
 // (This section is unchanged from the last fix and is correct)
-export async function GET(request: Request, { params }: { params: { assignmentId: string } }) {
+export async function GET(request: Request, context: { params : { assignmentId: string } }) {
     try {
         // Use params.assignmentId directly
-        if (!params.assignmentId) {
+        if (!context.params.assignmentId) {
             return NextResponse.json({ error: "Assignment ID is required" }, { status: 400 });
         }
 
-        const { pdfBuffer, projectTitle } = await generateTestReport(params.assignmentId);
+        const { pdfBuffer, projectTitle } = await generateTestReport(context.params.assignmentId);
 
         const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
         const filename = `testing_report_${safeTitle}.pdf`;
