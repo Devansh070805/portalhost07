@@ -152,11 +152,8 @@ async function generateTestReport(assignmentId: string) {
   return { pdfBuffer, projectTitle: data.project.title || 'report' };
 }
 
-// --- ✅ Fixed Handler for Vercel (no type errors) ---
-export const GET = async (
-  req: NextRequest,
-  context: any // 👈 use `any` to satisfy Next.js’ build system on Vercel
-) => {
+// --- ✅ Fixed Handler for Vercel ---
+export const GET = async (req: NextRequest, context: any) => {
   const assignmentId = context?.params?.assignmentId;
 
   if (!assignmentId) {
@@ -167,7 +164,10 @@ export const GET = async (
     const { pdfBuffer, projectTitle } = await generateTestReport(assignmentId);
     const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
 
-    return new NextResponse(pdfBuffer, {
+    // ✅ FIXED: Convert Buffer → Uint8Array for NextResponse
+    const uint8 = new Uint8Array(pdfBuffer);
+
+    return new NextResponse(uint8, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
