@@ -9,7 +9,8 @@ import {
     updateDoc,
     serverTimestamp,
     onSnapshot,
-    getDocs
+    getDocs,
+    deleteDoc
 } from "firebase/firestore";
 
 /**
@@ -41,6 +42,31 @@ export function getTestcasesForAssignment(assignmentId, callback) {
             unsubscribe();
         }
     };
+}
+
+export async function getTestcasesForAssignmentOnce(assignmentId) {
+    const testCases = [];
+    try {
+        const assignmentRef = doc(db, "assignments", assignmentId);
+        const q = query(collection(db, "testcases"), where("assignmentId", "==", assignmentRef));
+        const querySnapshot = await getDocs(q);
+
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            testCases.push({ 
+                id: doc.id, 
+                ...data,
+                // Ensure timestamps are serializable, just in case
+                creationTime: data.creationTime?.toDate ? data.creationTime.toDate().toISOString() : null,
+                resultSubmissionTime: data.resultSubmissionTime?.toDate ? data.resultSubmissionTime.toDate().toISOString() : null
+            });
+        });
+        
+        return testCases;
+    } catch (error) {
+        console.error("Error fetching test cases once: ", error);
+        return []; // Return empty array on error
+    }
 }
 
 /**
@@ -95,17 +121,27 @@ export async function setTestcaseMetadataUrl(testcaseId, publicFileUrl) {
 /**
  * --- MODIFIED FUNCTION ---
  * Submits the result (pass/fail) for a specific test case.
- * Now requires a 'testLogs' description.
+ * Now requires 'actualResult' and an optional 'debuggingReport' if status is 'fail'.
  */
-export async function submitTestResult(testcaseId, status, testedByName, testLogs) {
+export async function submitTestResult(testcaseId, status, testedByName, actualResult, debuggingReport = null) {
     try {
         const testcaseRef = doc(db, "testcases", testcaseId);
-        await updateDoc(testcaseRef, {
+        
+        const dataToUpdate = {
             testStatus: status,
             testedBy: testedByName,
-            testLogs: testLogs, // <-- NEW: Added test logs field
+            actualResult: actualResult, // <-- RENAMED from testLogs
             resultSubmissionTime: serverTimestamp()
-        });
+        };
+
+        if (status === 'fail' && debuggingReport) {
+            // @ts-ignore
+            dataToUpdate.debuggingReport = debuggingReport; // <-- NEW: Add the full report object
+            // @ts-ignore
+            dataToUpdate.severity = debuggingReport.severity || 'Low'; // <-- NEW: Store severity for easy access
+        }
+
+        await updateDoc(testcaseRef, dataToUpdate);
 
         console.log(`Test case ${testcaseId} marked as ${status}`);
         return true;
@@ -114,7 +150,6 @@ export async function submitTestResult(testcaseId, status, testedByName, testLog
         return false;
     }
 }
-
 /**
  * Gets test case statistics for an assignment.
  * (Unchanged)
@@ -139,5 +174,21 @@ export async function getTestCaseStats(assignmentId) {
     } catch (error) {
         console.error("Error getting test case stats: ", error);
         return stats; // Return default stats on error
+    }
+}
+
+export async function deleteTestcase(testcaseId) {
+    if (!testcaseId) {
+        console.error("No test case ID provided for deletion.");
+        return false;
+    }
+    try {
+        const testcaseRef = doc(db, "testcases", testcaseId);
+        await deleteDoc(testcaseRef);
+        console.log(`Test case ${testcaseId} deleted successfully.`);
+        return true;
+    } catch (error) {
+        console.error("Error deleting test case: ", error);
+        return false;
     }
 }

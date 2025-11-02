@@ -79,7 +79,10 @@ export default function TeamManagement({ leaderId, teamId, teamName, teamMemberR
   return (
     <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm mt-8">
       <div className="px-6 py-4 border-b-2 border-gray-300 flex justify-between items-center">
-        <h2 className="text-xl font-bold text-gray-800">Team Management</h2>
+        <h2 className="text-xl font-bold text-gray-800">
+  Team Management <span className="text-red-800">({teamName})</span>
+</h2>
+
         {/* View Members Button */}
         <button
           onClick={handleViewMembers}

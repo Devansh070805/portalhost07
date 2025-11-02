@@ -136,13 +136,30 @@ export default function ProjectTestingList() {
                                             {/* --- CHANGE 2: "Submitted by" <p> tag removed --- */}
                                         </div>
                                         {/* Original Status Span */}
-                                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                                            assign.status === 'COMPLETED' 
-                                            ? 'bg-green-100 text-green-700' 
-                                            : 'bg-yellow-100 text-yellow-700'
-                                        }`}>
-                                            {assign.status}
-                                        </span>
+                                        <span
+  className={`px-3 py-1 rounded-full text-sm font-medium ${
+    assign.status === 'COMPLETED'
+      ? 'bg-green-100 text-green-700'
+      : assign.status === 'ASSIGNED'
+      ? 'bg-blue-100 text-blue-700'
+      : assign.status === 'UNASSIGNED'
+      ? 'bg-yellow-100 text-yellow-700'
+      : assign.status === 'BLOCKED_LINK'
+      ? 'bg-red-100 text-red-700'
+      : 'bg-gray-100 text-gray-700'
+  }`}
+>
+  {assign.status === 'UNASSIGNED'
+    ? 'Unassigned'
+    : assign.status === 'ASSIGNED'
+    ? 'Assigned'
+    : assign.status === 'COMPLETED'
+    ? 'Completed'
+    : assign.status === 'BLOCKED_LINK'
+    ? 'Blocked'
+    : assign.status}
+</span>
+
                                     </div>
                                 </Link>
                                 ))}

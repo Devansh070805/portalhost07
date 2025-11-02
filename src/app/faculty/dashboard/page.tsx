@@ -1,15 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Users, FileText, CheckCircle, Clock, ChevronRight, Mail, X } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import {
+    Users,
+    FileText,
+    CheckCircle,
+    ChevronRight,
+    Search,
+    Inbox as InboxIcon
+} from 'lucide-react';
 import Header from '@/components/Header';
 import AuthCheck from '@/components/AuthCheck';
 import Link from 'next/link';
 
-// --- IMPORT YOUR SERVICE FUNCTIONS ---
-import { getAllProjectsForFacultyDashboard } from '../../../../services/projects'; // Adjust path
-import { getAllTeamsForFaculty } from '../../../../services/teams'; // Adjust path
-import { getTeamMembersDetails } from '../../../../services/teams'; // Import function to get member details
+import { getAllProjectsForFacultyDashboard } from '../../../../services/projects';
+import { getAllTeamsForFaculty } from '../../../../services/teams';
+import { getReportsForFaculty } from '../../../../services/inbox';
+import Inbox, { type Report } from '@/components/Inbox';
 
 console.log("FacultyDashboard component file is being read.");
 
@@ -17,91 +24,87 @@ console.log("FacultyDashboard component file is being read.");
 interface Project {
     id: string;
     title: string;
-    status: string; // PENDING, ASSIGNED, COMPLETED 
+    description?: string;
+    status: 'ASSIGNED' | 'UNASSIGNED' | 'COMPLETED' | 'BLOCKED_LINK';
     team: {
         id: string | null;
         name: string;
-        leader: { name: string; email: string; };
+        leader: { id?: string; name: string; email: string; }; // id is optional
         subgroup: { name: string; };
     };
     deployedLink?: string;
     githubLink?: string;
-    testAssignment?: { assignedTo: { name: string } }; // For quick view
 }
 
 interface Team {
     id: string;
     name: string;
-    leader: { name: string; email: string; };
+    leader: { id: string; name: string; email: string; };
     subgroup?: { name: string; };
-    members: any[]; // Array of DocumentReferences
-}
-
-interface StudentMember {
-    id: string;
-    name: string;
-    email: string;
+    members: any[];
 }
 
 // --- MAIN COMPONENT ---
 export default function FacultyDashboard() {
-  console.log("1. FacultyDashboard function is EXECUTING.");
-
     const [projects, setProjects] = useState<Project[]>([]);
     const [teams, setTeams] = useState<Team[]>([]);
-    const [stats, setStats] = useState({
-        totalProjects: 0,
-        projectsCompleted: 0, // Based on project status 'COMPLETED'
-        totalTeams: 0,
-    });
     const [loading, setLoading] = useState(true);
     const [userName, setUserName] = useState('');
+    const [inboxReports, setInboxReports] = useState<Report[]>([]);
+    const [activeTab, setActiveTab] = useState<'overview' | 'inbox'>('overview');
 
-    console.log("2. State has been initialized.");
+    const [stats, setStats] = useState({
+        totalProjects: 0,
+        testedOrCompleted: 0,
+        totalTeams: 0,
+    });
 
-    // State for viewing details
-    const [selectedTeamMembers, setSelectedTeamMembers] = useState<StudentMember[] | null>(null);
-    const [selectedProjectDetails, setSelectedProjectDetails] = useState<Project | null>(null);
-    const [loadingDetails, setLoadingDetails] = useState(false);
+    const [teamSearchQuery, setTeamSearchQuery] = useState('');
+    const [projectSearchQuery, setProjectSearchQuery] = useState('');
+    const [testingStatusSearchQuery, setTestingStatusSearchQuery] = useState('');
+
+    const [activeStatusTab, setActiveStatusTab] = useState<'COMPLETED' | 'ASSIGNED' | 'UNASSIGNED' | 'BLOCKED_LINK'>('COMPLETED');
+    const [projectsCompleted, setProjectsCompleted] = useState<Project[]>([]);
+    const [projectsAssigned, setProjectsAssigned] = useState<Project[]>([]);
+    const [projectsUnassigned, setProjectsUnassigned] = useState<Project[]>([]);
+    const [projectsReported, setProjectsReported] = useState<Project[]>([]);
 
     useEffect(() => {
-      console.log("useEffect hook has FIRED.");
         const name = localStorage.getItem('userName') || 'Faculty';
         setUserName(name);
         fetchData();
     }, []);
 
     const fetchData = async () => {
-      console.log("fetchData function called!");
         setLoading(true);
         try {
-            const [projectsData, teamsData] = await Promise.all([
+            const [projectsData, teamsData, reportsData] = await Promise.all([
                 getAllProjectsForFacultyDashboard(),
-                getAllTeamsForFaculty()
+                getAllTeamsForFaculty(),
+                getReportsForFaculty()
             ]);
 
             const fetchedProjects = (projectsData || []) as Project[];
             const fetchedTeams = (teamsData || []) as Team[];
 
-            console.log("Fetched Projects:", fetchedProjects);
-
             setProjects(fetchedProjects);
             setTeams(fetchedTeams);
+            setInboxReports(reportsData as Report[]);
 
-            // --- FIX: Update calculation to include "TESTING" status ---
-            // The stat card says "Projects Tested/Completed"
-            const testedOrCompleted = fetchedProjects.filter(
-                (p) => p.status === 'COMPLETED' || p.status === 'TESTING'
+            const testedOrCompletedCount = fetchedProjects.filter(
+                (p) => p.status === 'COMPLETED' 
             ).length;
-
-            console.log(testedOrCompleted + "fss")
 
             setStats({
                 totalProjects: fetchedProjects.length,
-                // --- Use the new calculation ---
-                projectsCompleted: testedOrCompleted,
+                testedOrCompleted: testedOrCompletedCount,
                 totalTeams: fetchedTeams.length,
             });
+
+            setProjectsCompleted(fetchedProjects.filter(p => p.status === 'COMPLETED'));
+            setProjectsAssigned(fetchedProjects.filter(p => p.status === 'ASSIGNED'));
+            setProjectsUnassigned(fetchedProjects.filter(p => p.status === 'UNASSIGNED'));
+            setProjectsReported(fetchedProjects.filter(p => p.status === 'BLOCKED_LINK'));
         } catch (error) {
             console.error('Error fetching data:', error);
         } finally {
@@ -109,164 +112,259 @@ export default function FacultyDashboard() {
         }
     };
 
-    // --- Handlers for Viewing Details ---
-    const handleViewTeamMembers = async (team: Team) => {
-        setSelectedProjectDetails(null); // Close project details if open
-        setLoadingDetails(true);
-        setSelectedTeamMembers(null); // Clear previous members
-        try {
-            const memberDetails = await getTeamMembersDetails(team.members);
-            setSelectedTeamMembers(memberDetails as StudentMember[]);
-        } catch (error) {
-            console.error("Error fetching team members:", error);
-            // Optionally show an error message to the user
-        } finally {
-            setLoadingDetails(false);
-        }
+    const filterProjects = (projectList: Project[], query: string) => {
+        if (!query) return projectList;
+        const lowerQuery = query.toLowerCase();
+        return projectList.filter(project =>
+            project.title.toLowerCase().includes(lowerQuery) ||
+            project.team.name.toLowerCase().includes(lowerQuery)
+        );
     };
 
-    const handleViewProjectDetails = (project: Project) => {
-        setSelectedTeamMembers(null); // Close team members if open
-        setSelectedProjectDetails(project);
-    };
+    const filteredTeams = useMemo(() => {
+        if (!teamSearchQuery) return teams;
+        const query = teamSearchQuery.toLowerCase();
+        return teams.filter(team =>
+            team.name.toLowerCase().includes(query) ||
+            team.leader.name.toLowerCase().includes(query)
+        );
+    }, [teams, teamSearchQuery]);
 
-    const closeDetails = () => {
-        setSelectedTeamMembers(null);
-        setSelectedProjectDetails(null);
-    }
+    const filteredAllProjects = useMemo(() => filterProjects(projects, projectSearchQuery), [projects, projectSearchQuery]);
+    const filteredProjectsCompleted = useMemo(() => filterProjects(projectsCompleted, testingStatusSearchQuery), [projectsCompleted, testingStatusSearchQuery]);
+    const filteredProjectsAssigned = useMemo(() => filterProjects(projectsAssigned, testingStatusSearchQuery), [projectsAssigned, testingStatusSearchQuery]);
+    const filteredProjectsUnassigned = useMemo(() => filterProjects(projectsUnassigned, testingStatusSearchQuery), [projectsUnassigned, testingStatusSearchQuery]);
+    const filteredProjectsReported = useMemo(() => filterProjects(projectsReported, testingStatusSearchQuery), [projectsReported, testingStatusSearchQuery]);
 
-    console.log("3. Handlers have been defined.");
-    // --- Loading State ---
     if (loading) {
-      console.log("4. Component is RETURNING (loading state).");
         return (
-                <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-                    {/* ... (loading spinner UI) ... */}
-                    <div className="text-center"> <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-800 mx-auto"></div> <p className="mt-4 text-gray-600">Loading Dashboard...</p> </div>
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-800 mx-auto"></div>
+                    <p className="mt-4 text-gray-600">Loading Dashboard...</p>
                 </div>
+            </div>
         );
     }
 
-    console.log("5. Component is RETURNING (main content).");
-    // --- Main Render ---
     return (
         <AuthCheck requiredRole="faculty">
-            <div className="min-h-screen bg-gray-100">
+            <div className="min-h-screen bg-gray-100 pb-20">
                 <Header title="Faculty Dashboard" userRole={userName} />
 
-                <div className="max-w-7xl mx-auto px-6 py-8">
-                    {/* Navigation Tabs */}
-                    <div className="flex gap-4 mb-6">
-                        <Link href="/faculty/dashboard" className="px-4 py-2 bg-red-800 text-white rounded-lg font-medium"> Overview </Link>
-                        <Link href="/faculty/assignments" className="px-4 py-2 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-medium hover:bg-gray-50"> Assignments </Link>
-                        <Link href="/faculty/subgroups" className="px-4 py-2 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-medium hover:bg-gray-50"> Subgroups </Link>
+                <div className="max-w-7xl mx-auto px-6 py-8 flex justify-between items-center mb-6">
+                    <div className="flex gap-4">
+                        <button
+                            onClick={() => setActiveTab('overview')}
+                            className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'overview' ? 'bg-red-800 text-white' : 'bg-white text-gray-700 border-2 border-gray-300 hover:bg-gray-50'}`}
+                        >
+                            Overview
+                        </button>
+                        <Link href="/faculty/assignments" className="px-4 py-2 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-medium hover:bg-gray-50">
+                            Assignments
+                        </Link>
+                        <Link href="/faculty/subgroups" className="px-4 py-2 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-medium hover:bg-gray-50">
+                            Subgroups
+                        </Link>
                     </div>
 
-                    {/* Stats Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm"> <FileText className="w-8 h-8 text-red-800 mb-3" /> <h3 className="text-2xl font-bold text-gray-800">{stats.totalProjects}</h3> <p className="text-gray-600">Total Projects Submitted</p> </div>
-                        <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
-                            <CheckCircle className="w-8 h-8 text-green-600 mb-3" />
-                            {/* This h3 now correctly reflects the label "Projects Tested/Completed" */}
-                            <h3 className="text-2xl font-bold text-green-600">{stats.projectsCompleted}</h3>
-                            <p className="text-gray-600">Projects Tested/Completed</p>
-                        </div>
-                        <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm"> <Users className="w-8 h-8 text-red-800 mb-3" /> <h3 className="text-2xl font-bold text-gray-800">{stats.totalTeams}</h3> <p className="text-gray-600">Total Teams Registered</p> </div>
-                    </div>
+                    {/* Inbox icon on the right */}
+                    <button
+                        onClick={() => setActiveTab('inbox')}
+                        className={`relative p-3 rounded-full border-2 border-gray-300 hover:bg-gray-50 ${activeTab === 'inbox' ? 'bg-red-800 text-white' : 'bg-white text-gray-700'}`}
+                    >
+                        <InboxIcon className="w-5 h-5" />
+                        {inboxReports.length > 0 && (
+                            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
+                                {inboxReports.length}
+                            </span>
+                        )}
+                    </button>
+                </div>
 
-                    {/* Main Content Area - Teams and Projects */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
-                        {/* All Teams Section */}
-                        <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm overflow-hidden">
-                            <div className="px-6 py-4 border-b-2 border-gray-300"> <h2 className="text-xl font-bold text-gray-800">All Teams ({teams.length})</h2> </div>
-                            <div className="max-h-[600px] overflow-y-auto"> {/* Added scroll */}
-                                {teams.length === 0 ? (
-                                    <p className="p-6 text-gray-500">No teams registered yet.</p>
-                                ) : (
-                                    <ul className="divide-y divide-gray-300">
-                                        {teams.map((team) => (
-                                            <li key={team.id} className="px-6 py-4 hover:bg-gray-50 flex justify-between items-center">
-                                                <div>
-                                                    <p className="font-semibold text-gray-800">{team.name}</p>
-                                                    <p className="text-sm text-gray-600">Leader: {team.leader.name} {team.subgroup?.name ? `(${team.subgroup.name})` : ''}</p>
-                                                </div>
-                                                <button onClick={() => handleViewTeamMembers(team)} className="text-red-800 hover:text-red-900"> <ChevronRight className="w-5 h-5" /> </button>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
+                <div className="max-w-7xl mx-auto px-6">
+                    {activeTab === 'overview' && (
+                        <div className="space-y-8">
+                            
+                            {/* --- (RESTORED) STATS CARDS --- */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
+                                    <FileText className="w-8 h-8 text-red-800 mb-3" />
+                                    <h3 className="text-2xl font-bold text-gray-800">{stats.totalProjects}</h3>
+                                    <p className="text-gray-600">Total Projects Submitted</p>
+                                </div>
+                                <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
+                                    <CheckCircle className="w-8 h-8 text-green-600 mb-3" />
+                                    <h3 className="text-2xl font-bold text-green-600">{stats.testedOrCompleted}</h3>
+                                    <p className="text-gray-600">Projects Tested/Completed</p>
+                                </div>
+                                <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
+                                    <Users className="w-8 h-8 text-red-800 mb-3" />
+                                    <h3 className="text-2xl font-bold text-gray-800">{stats.totalTeams}</h3>
+                                    <p className="text-gray-600">Total Teams Registered</p>
+                                </div>
                             </div>
-                        </div>
+                            {/* --- (END RESTORED) --- */}
 
-                        {/* All Projects Section */}
-                        <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm overflow-hidden">
-                            <div className="px-6 py-4 border-b-2 border-gray-300"> <h2 className="text-xl font-bold text-gray-800">All Projects ({projects.length})</h2> </div>
-                             <div className="max-h-[600px] overflow-y-auto"> {/* Added scroll */}
-                                {projects.length === 0 ? (
-                                    <p className="p-6 text-gray-500">No projects submitted yet.</p>
-                                ) : (
-                                    <ul className="divide-y divide-gray-300">
-                                        {projects.map((project) => (
-                                            <li key={project.id} className="px-6 py-4 hover:bg-gray-50 flex justify-between items-center">
-                                                <div>
-                                                    <p className="font-semibold text-gray-800">{project.title}</p>
-                                                    <p className="text-sm text-gray-600">Team: {project.team.name} ({project.status})</p>
-                                                </div>
-                                                <button onClick={() => handleViewProjectDetails(project)} className="text-red-800 hover:text-red-900"> <ChevronRight className="w-5 h-5" /> </button>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
-                            </div>
-                        </div>
-                    </div>
 
-                    {/* Details Side Panel/Modal (Simple Inline Version) */}
-                    {(selectedTeamMembers || selectedProjectDetails || loadingDetails) && (
-                        <div className="mt-8 bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm relative">
-                             <button onClick={closeDetails} className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"> <X className="w-6 h-6" /> </button>
+                            {/* Testing Status Section (Your new logic) */}
+                            <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
+                                <div className="px-6 py-4 border-b-2 border-gray-300">
+                                    <h2 className="text-xl font-bold text-gray-800">Testing Status</h2>
+                                </div>
 
-                            {loadingDetails && <p>Loading details...</p>}
-
-                            {/* Team Member Details */}
-                            {selectedTeamMembers && (
-                                <>
-                                    <h3 className="text-lg font-bold mb-4">Team Members</h3>
-                                    <ul className="space-y-2">
-                                        {selectedTeamMembers.map(member => (
-                                            <li key={member.id} className="flex items-center gap-2 text-sm">
-                                                <Users className="w-4 h-4 text-gray-500"/>
-                                                <span>{member.name} ({member.email})</span>
-                                                 {/* You can add a check here if member.id === teamLeader.id */}
-                                            </li>
-        ))}
-                                    </ul>
-                                </>
-                            )}
-
-                            {/* Project Details */}
-                            {selectedProjectDetails && (
-                                <>
-                                    <h3 className="text-lg font-bold mb-2">{selectedProjectDetails.title}</h3>
-                                    <p className="text-sm text-gray-600 mb-1">Team: {selectedProjectDetails.team.name}</p>
-                                    <p className="text-sm text-gray-600 mb-1">Status: {selectedProjectDetails.status}</p>
-                                    <p className="text-sm text-gray-600 mb-3">Leader: {selectedProjectDetails.team.leader.name} ({selectedProjectDetails.team.leader.email})</p>
-                                    {/* Add more project details here: description, links etc. */}
-                                    <div className="flex gap-3 mt-4">
-                                        {selectedProjectDetails.deployedLink && <a href={selectedProjectDetails.deployedLink} target="_blank" className="link-button text-xs">View Live</a>}
-                                        {selectedProjectDetails.githubLink && <a href={selectedProjectDetails.githubLink} target="_blank" className="link-button text-xs">GitHub</a>}
-                                         {/* Link to assignment page could go here */}
-                                         <Link href="/faculty/assignments" className="link-button text-xs bg-red-100 text-red-800 border-red-300 hover:bg-red-200">Manage Assignment</Link>
+                                <div className="p-4 border-b-2 border-gray-300">
+                                    <div className="relative">
+                                        <input
+                                            type="text"
+                                            placeholder="Search projects in active tab"
+                                            value={testingStatusSearchQuery}
+                                            onChange={(e) => setTestingStatusSearchQuery(e.target.value)}
+                                            className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-red-600 text-gray-700"
+                                        />
+                                        <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                                     </div>
-                                </>
-                            )}
+                                </div>
+
+                                <div className="flex border-b border-gray-300 flex-wrap">
+                                    <StatusTab label="Testing Completed" value="COMPLETED" count={filteredProjectsCompleted.length} activeTab={activeStatusTab} setActiveTab={setActiveStatusTab} />
+                                    <StatusTab label="Assigned" value="ASSIGNED" count={filteredProjectsAssigned.length} activeTab={activeStatusTab} setActiveTab={setActiveStatusTab} />
+                                    <StatusTab label="Not Yet Assigned" value="UNASSIGNED" count={filteredProjectsUnassigned.length} activeTab={activeStatusTab} setActiveTab={setActiveStatusTab} />
+                                    <StatusTab label="Reported Projects" value="BLOCKED_LINK" count={filteredProjectsReported.length} activeTab={activeStatusTab} setActiveTab={setActiveStatusTab} />
+                                </div>
+
+                                <div className="max-h-[400px] overflow-y-auto">
+                                    {activeStatusTab === 'COMPLETED' && <ProjectList projects={filteredProjectsCompleted} />}
+                                    {activeStatusTab === 'ASSIGNED' && <ProjectList projects={filteredProjectsAssigned} />}
+                                    {activeStatusTab === 'UNASSIGNED' && <ProjectList projects={filteredProjectsUnassigned} />}
+                                    {activeStatusTab === 'BLOCKED_LINK' && <ProjectList projects={filteredProjectsReported} />}
+                                </div>
+                            </div>
+
+                            {/* --- (RESTORED) ALL TEAMS AND ALL PROJECTS --- */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                {/* All Teams Section */}
+                                <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm overflow-hidden">
+                                    <div className="px-6 py-4 border-b-2 border-gray-300">
+                                        <h2 className="text-xl font-bold text-gray-800">All Teams ({filteredTeams.length})</h2>
+                                    </div>
+                                    <div className="p-4 border-b-2 border-gray-300">
+                                        <div className="relative">
+                                            <input
+                                                type="text"
+                                                placeholder="Search teams by name or leader"
+                                                value={teamSearchQuery}
+                                                onChange={(e) => setTeamSearchQuery(e.target.value)}
+                                                className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-red-600 text-gray-700"
+                                            />
+                                            <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                        </div>
+                                    </div>
+                                    <div className="max-h-[600px] overflow-y-auto">
+                                        {filteredTeams.length === 0 ? (
+                                            <p className="p-6 text-gray-500">{teamSearchQuery ? "No teams match your search." : "No teams registered yet."}</p>
+                                        ) : (
+                                            <ul className="divide-y divide-gray-300">
+                                                {filteredTeams.map((team) => (
+                                                    <li key={team.id} className="px-6 py-4 hover:bg-gray-50 flex justify-between items-center">
+                                                        <div>
+                                                            <p className="font-semibold text-gray-800">{team.name}</p>
+                                                            <p className="text-sm text-gray-600">Leader: {team.leader.name} {team.subgroup?.name ? `(${team.subgroup.name})` : ''}</p>
+                                                        </div>
+                                                        <Link href={`/faculty/team/${team.id}`} className="text-red-800 hover:text-red-900">
+                                                            <ChevronRight className="w-5 h-5" />
+                                                        </Link>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* All Projects Section */}
+                                <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm overflow-hidden">
+                                    <div className="px-6 py-4 border-b-2 border-gray-300">
+                                        <h2 className="text-xl font-bold text-gray-800">All Projects ({filteredAllProjects.length})</h2>
+                                    </div>
+                                    <div className="p-4 border-b-2 border-gray-300">
+                                        <div className="relative">
+                                            <input
+                                                type="text"
+                                                placeholder="Search projects by title or team"
+                                                value={projectSearchQuery}
+                                                onChange={(e) => setProjectSearchQuery(e.target.value)}
+                                                className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-red-600 text-gray-700"
+                                            />
+                                            <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                        </div>
+                                    </div>
+                                    <div className="max-h-[600px] overflow-y-auto">
+                                        {filteredAllProjects.length === 0 ? (
+                                            <p className="p-6 text-gray-500">{projectSearchQuery ? "No projects match your search." : "No projects submitted yet."}</p>
+                                        ) : (
+                                            <ul className="divide-y divide-gray-300">
+                                                {filteredAllProjects.map((project) => (
+                                                    <li key={project.id} className="px-6 py-4 hover:bg-gray-50 flex justify-between items-center">
+                                                        <div>
+                                                            <p className="font-semibold text-gray-800">{project.title}</p>
+                                                            <p className="text-sm text-gray-600">Team: {project.team.name} ({project.status})</p>
+                                                        </div>
+                                                        <Link href={`/faculty/team/${project.team.id}`} className="text-red-800 hover:text-red-900">
+                                                            <ChevronRight className="w-5 h-5" />
+                                                        </Link>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            {/* --- (END RESTORED) --- */}
+
                         </div>
                     )}
 
+                    {activeTab === 'inbox' && (
+                        <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
+                            <div className="px-6 py-4 border-b-2 border-gray-300">
+                                <h2 className="text-xl font-bold text-gray-800">Inbox: Project Link Reports</h2>
+                            </div>
+                            <Inbox role="faculty" reports={inboxReports} onDataMutate={fetchData} />
+                        </div>
+                    )}
                 </div>
             </div>
         </AuthCheck>
     );
-     // Add base styles if needed: e.g., .link-button { @apply px-3 py-1 bg-gray-100 border-2 border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-200 inline-flex items-center gap-1; }
+}
+
+// --- SUB COMPONENTS ---
+function ProjectList({ projects }: { projects: Project[] }) {
+    if (projects.length === 0) return <p className="p-6 text-gray-500 text-center">No projects in this category.</p>;
+    return (
+        <ul className="divide-y divide-gray-300">
+            {projects.map(project => (
+                <li key={project.id} className="px-6 py-4 hover:bg-gray-50 flex justify-between items-center">
+                    <div>
+                        <p className="font-semibold text-gray-800">{project.title}</p>
+                        <p className="text-sm text-gray-600">Team: {project.team.name}</p>
+                    </div>
+                    <Link href={`/faculty/team/${project.team.id}`} className="text-red-800 hover:text-red-900">
+                        View Details <ChevronRight className="w-5 h-5 inline" />
+                    </Link>
+                </li>
+            ))}
+        </ul>
+    );
+}
+
+function StatusTab({ label, value, count, activeTab, setActiveTab }: any) {
+    return (
+        <button
+            onClick={() => setActiveTab(value)}
+            className={`flex-1 p-4 font-semibold min-w-[150px] ${activeTab === value ? 'text-red-800 border-b-4 border-red-800' : 'text-gray-600 hover:bg-gray-50'}`}
+        >
+            {label} ({count})
+        </button>
+    );
 }

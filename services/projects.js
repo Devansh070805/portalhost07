@@ -9,7 +9,8 @@ import {
   where, 
   getDocs, 
   getDoc,
-  updateDoc
+  updateDoc,
+  deleteDoc
 } from "firebase/firestore";
 
 /**
@@ -34,7 +35,7 @@ export async function submitProject(projectData) {
       // <<< END NEWLY ADDED FIELDS >>>
       
       submissionTime: serverTimestamp(),
-      status: "PENDING"
+      status: "UNASSIGNED"
     });
 
     console.log("Project submitted with ID: ", docRef.id);
@@ -59,19 +60,38 @@ export async function getProjectsByTeam(teamId) {
         for (const projectDoc of projectSnapshots.docs) {
             const projectData = projectDoc.data();
             const projectId = projectDoc.id;
-            let assignmentInfo = null; // To store assignment details if found
+            const projectRef = projectDoc.ref;
+            
+            const assignmentDetails = []; // To store all assignment details
 
-            // Now, query the assignments collection to find the assignment for THIS project
-            const assignmentQuery = query(collection(db, "assignments"), where("projectId", "==", projectDoc.ref));
+            // Now, query the assignments collection to find ALL assignments for THIS project
+            const assignmentQuery = query(collection(db, "assignments"), where("projectId", "==", projectRef));
             const assignmentSnapshots = await getDocs(assignmentQuery);
 
             if (!assignmentSnapshots.empty) {
-                // Assuming a project only has one assignment in this system
-                const assignmentDoc = assignmentSnapshots.docs[0];
-                assignmentInfo = {
-                    id: assignmentDoc.id, // THE CRUCIAL ASSIGNMENT ID
-                    // You could add assignedToTeam details here if needed later
-                };
+                // Loop through all assignments for this project
+                for (const assignmentDoc of assignmentSnapshots.docs) {
+                    const assignData = assignmentDoc.data();
+                    let assignedToTeam = { id: null, name: "N/A" };
+
+                    // Fetch the testing team's name
+                    if (assignData.assignedToTeamId) {
+                        try {
+                            const teamDoc = await getDoc(assignData.assignedToTeamId);
+                            if (teamDoc.exists()) {
+                                assignedToTeam = { id: teamDoc.id, name: teamDoc.data().teamName };
+                            }
+                        } catch (e) {
+                            console.error("Error fetching assigned-to team", e);
+                        }
+                    }
+                    
+                    assignmentDetails.push({
+                        id: assignmentDoc.id, // THE CRUCIAL ASSIGNMENT ID
+                        status: assignData.status || "ASSIGNED",
+                        assignedTo: assignedToTeam
+                    });
+                }
             }
 
             projects.push({
@@ -82,9 +102,7 @@ export async function getProjectsByTeam(teamId) {
                 deployedLink: projectData.deployedLink,
                 githubLink: projectData.githubLink,
                 submissionTime: projectData.submissionTime,
-                testAssignment: assignmentInfo, // Add the assignment info (or null)
-                // Note: testCase1 and testCase2 are saved, but not fetched here
-                // as this function seems to be for a list view.
+                testAssignments: assignmentDetails, // Add the assignment info array
             });
         }
 
@@ -193,7 +211,7 @@ export async function getAllProjectsForFaculty() {
       projects.push({
         id: projectId,
         title: projectData.title,
-        status: assignments.length > 0 ? "ASSIGNED" : (projectData.status || "PENDING"),
+        status: assignments.length > 0 ? "ASSIGNED" : (projectData.status || "UNASSIGNED"),
         testAssignments: assignments, // Note the plural 's'
         deployedLink: projectData.deployedLink,
         githubLink: projectData.githubLink,
@@ -273,7 +291,7 @@ export async function getAllProjectsForFacultyDashboard() {
             projects.push({
                 id: projectId,
                 title: projectData.title,
-                status: projectData.status || (assignment ? assignment.status : "PENDING"),
+                status: projectData.status || (assignment ? assignment.status : "UNASSIGNED"),
                 deployedLink: projectData.deployedLink,
                 githubLink: projectData.githubLink,
                 team: team,
@@ -376,5 +394,80 @@ export async function checkAndCompleteProject(projectId) {
 
     } catch (error) {
         console.error("Error in checkAndCompleteProject: ", error);
+    }
+}
+
+// --- NEW DELETE FUNCTION (converted to JS) ---
+
+/**
+ * Deletes a project, all its related assignments, and all test cases
+ * for those assignments.
+ *
+ * @param {string} projectId The ID of the project in the 'projects' collection.
+ * @returns {Promise<void>}
+ */
+export const deleteProject = async (projectId) => {
+  console.log(`Starting deletion for project: ${projectId}`);
+  const projectRef = doc(db, 'projects', projectId);
+
+  try {
+    // 1. Find all 'assignments' that point to this project
+    const assignmentsQuery = query(
+      collection(db, 'assignments'),
+      where('projectRef', '==', projectRef)
+    );
+
+    const assignmentsSnapshot = await getDocs(assignmentsQuery);
+    console.log(`Found ${assignmentsSnapshot.size} related assignments to delete.`);
+
+    const deletePromises = []; // Removed: : Promise<void>[]
+
+    for (const assignmentDoc of assignmentsSnapshot.docs) {
+      console.log(`Processing assignment: ${assignmentDoc.id}`);
+
+      // 2. For each assignment, find and delete all test cases in its 'testCases' subcollection
+      const testCasesQuery = query(collection(assignmentDoc.ref, 'testCases'));
+      const testCasesSnapshot = await getDocs(testCasesQuery);
+
+      console.log(`...found ${testCasesSnapshot.size} test cases to delete.`);
+      testCasesSnapshot.forEach((testCaseDoc) => {
+        // Add test case deletion to the promise list
+        deletePromises.push(deleteDoc(testCaseDoc.ref));
+      });
+
+      // 3. Add the assignment deletion itself to the promise list
+      deletePromises.push(deleteDoc(assignmentDoc.ref));
+    }
+
+    // 4. Add the original project deletion to the promise list
+    deletePromises.push(deleteDoc(projectRef));
+
+    // 5. Execute all deletes
+    await Promise.all(deletePromises);
+
+    console.log(`Successfully deleted project ${projectId} and all related data.`);
+
+  } catch (error) {
+    console.error('Error during cascading delete of project:', error);
+    throw new Error('Failed to delete project and its related data.');
+  }
+};
+
+/**
+ * --- NEW FUNCTION ---
+ * Updates only the deployedLink for a project.
+ * To be called by faculty approval function.
+ */
+export async function updateProjectLink(projectId, newLink) {
+    try {
+        const projectRef = doc(db, "projects", projectId);
+        await updateDoc(projectRef, {
+            deployedLink: newLink
+        });
+        console.log(`Project ${projectId} link updated successfully.`);
+        return true;
+    } catch (error) {
+        console.error("Error updating project link: ", error);
+        return false;
     }
 }

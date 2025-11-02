@@ -5,12 +5,13 @@ import { Upload } from 'lucide-react';
 import Header from '@/components/Header';
 import AuthCheck from '@/components/AuthCheck';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect} from 'react';
 import { useRouter } from 'next/navigation';
 import { submitProject } from '../../../services/projects.js';
 
 export default function ProjectSubmission() {
   const router = useRouter();
+  const [userName, setUserName] = useState('Student'); // fallback name
   const [formData, setFormData] = useState({
     title: '',
     description: '', // This will now be populated by "Project Scope"
@@ -25,6 +26,13 @@ export default function ProjectSubmission() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const storedName = localStorage.getItem('userName') || 'Student';
+      setUserName(storedName);
+    }
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData({
@@ -77,7 +85,7 @@ export default function ProjectSubmission() {
   return (
     <AuthCheck requiredRole="student" requiredStudentType="LEADER">
       <div className="min-h-screen bg-gray-100">
-        <Header title="Project Submission" userRole="Team Leader" />
+        <Header title="Project Submission" userRole={userName} />
         
         <div className="max-w-4xl mx-auto px-6 py-8">
           <div className="bg-white border-2 border-gray-300 rounded-xl p-8 shadow-sm">
@@ -162,6 +170,7 @@ export default function ProjectSubmission() {
                     value={formData.deployedLink}
                     onChange={handleChange}
                     placeholder="https://your-project.com"
+                    required
                     className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg text-gray-800 placeholder-gray-500 focus:outline-none focus:border-red-800"
                     disabled={loading}
                   />
@@ -196,7 +205,7 @@ export default function ProjectSubmission() {
                 />
               </div>
 
-              <div>
+              {/* <div>
                 <label className="block text-gray-700 mb-2 font-medium">SRS Document (Optional)</label>
                 <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-gray-50 hover:bg-gray-100 cursor-pointer">
                   <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
@@ -204,7 +213,7 @@ export default function ProjectSubmission() {
                   <p className="text-gray-500 text-sm mt-1">PDF, DOC (Max 10MB)</p>
                   <p className="text-gray-500 text-xs mt-2">File upload coming soon</p>
                 </div>
-              </div>
+              </div> */}
 
               {error && (
                 <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4">

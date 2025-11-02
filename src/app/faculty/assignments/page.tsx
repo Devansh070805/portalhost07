@@ -1,6 +1,6 @@
 'use client';
 
-import { Users, Filter, Check, X } from 'lucide-react';
+import { Users, Filter, Check, X, RefreshCw } from 'lucide-react';
 import Header from '@/components/Header';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
@@ -8,7 +8,12 @@ import { useState, useEffect } from 'react';
 // --- IMPORT YOUR NEW SERVICE FUNCTIONS ---
 import { getAllProjectsForFaculty } from '../../../../services/projects'; // Adjust path
 import { getAllTeamsForFaculty } from '../../../../services/teams'; // Adjust path
-import { manualAssignProject } from '../../../../services/assignments'; // Adjust path
+// --- ⭐ IMPORT THE NEW FUNCTION ---
+import { 
+  replaceProjectAssignments,
+  confirmProjectAssignments // <-- This is new
+} from '../../../../services/assignments';
+
 
 // --- INTERFACES TO MATCH FIREBASE DATA ---
 interface Project {
@@ -92,6 +97,27 @@ const findAvailableTeam = (
   return null;
 };
 
+const getTeamLoad = (teamId: string, allProjects: Project[], projectIdToExclude: string | null) => {
+  let currentLoad = 0;
+  allProjects.forEach(p => {
+    
+    // --- THIS IS THE NEW LOGIC ---
+    // If this project is the one we're reassigning, skip it.
+    // Its slots are "free" for the purpose of this calculation.
+    if (p.id === projectIdToExclude) {
+        return; 
+    }
+    // --- END NEW LOGIC ---
+
+    p.testAssignments?.forEach(a => {
+      if (a.assignedTo.id === teamId && !a.isProposed) {
+        currentLoad++;
+      }
+    });
+  });
+  return currentLoad;
+};
+
 export default function AssignmentsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All Status');
@@ -99,9 +125,17 @@ export default function AssignmentsPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedProject, setSelectedProject] = useState<string>('');
-  const [selectedTeam, setSelectedTeam] = useState<string>('');
+  const [selectedTeam1, setSelectedTeam1] = useState<string>('');
+  const [selectedTeam2, setSelectedTeam2] = useState<string>('');
   const [hasProposedChanges, setHasProposedChanges] = useState(false);
   const [userName, setUserName] = useState('');
+
+  // --- NEW STATE FOR REASSIGN MODAL ---
+  const [isReassignModalOpen, setIsReassignModalOpen] = useState(false);
+  const [projectToReassign, setProjectToReassign] = useState<Project | null>(null);
+  const [reassignTeam1, setReassignTeam1] = useState<string>('');
+  const [reassignTeam2, setReassignTeam2] = useState<string>('');
+  // --- END NEW STATE ---
 
   useEffect(() => {
     const name = localStorage.getItem('userName') || 'Faculty';
@@ -344,32 +378,45 @@ export default function AssignmentsPage() {
   // --- End of Modified Implementation ---
   // -----------------------------------------------------------------
 
+
+  // --- ⭐ FIXED FUNCTION ---
+  // This function is now correct. It calls the new service function
+  // 'confirmProjectAssignments' to atomically confirm proposals
+  // instead of incorrectly trying to add new assignments.
   const handleConfirmAllAssignments = async () => {
     setLoading(true);
     const projectsToConfirm = projects.filter((p) =>
       p.testAssignments?.some((a) => a.isProposed)
     );
 
-    const assignmentPromises = projectsToConfirm.flatMap(
-      (p) =>
-        p.testAssignments!
-          .filter((a) => a.isProposed)
-          .map((assignment) => {
-            // @ts-ignore
-            return manualAssignProject(
-              p.id,
-              assignment.assignedTo.id,
-              p.team.id
-            );
-          })
-    );
+    // Create ONE promise per PROJECT, not one per assignment
+    const projectPromises = projectsToConfirm.map((p) => {
+      // Format the assignments to match what replaceProjectAssignments expects
+      const newAssignments = p.testAssignments!.map(a => ({
+          teamId: a.assignedTo.id,
+          teamName: a.assignedTo.name,
+      }));
+      
+      // Call the *correct* function
+      return replaceProjectAssignments(p.id, newAssignments);
+    });
 
     try {
-      const results = await Promise.all(assignmentPromises);
-      // @ts-ignore
+      const results = await Promise.all(projectPromises);
+      
       const successCount = results.filter((r) => r.success).length;
-      alert(`Successfully confirmed ${successCount} assignments!`);
-    } catch (error) {
+      alert(`Successfully confirmed assignments for ${successCount} projects!`);
+
+      const failedCount = results.filter((r) => !r.success).length;
+      if (failedCount > 0) {
+        alert(`Failed to confirm assignments for ${failedCount} projects. Check console for errors.`);
+        results.filter((r) => !r.success).forEach((r) => {
+            // @ts-ignore
+            console.error(`Failed project ${r.projectId || 'unknown'}: ${r.error}`);
+        });
+      }
+
+    } catch (error){
       console.error('Error confirming assignments: ', error);
       alert('An error occurred while confirming assignments.');
     } finally {
@@ -381,8 +428,8 @@ export default function AssignmentsPage() {
     fetchData();
   };
 
-  // --- ⭐ MODIFIED: Re-roll logic also uses two-pass system ---
-  const handleReassignSingleProject = (projectId: string) => {
+  // --- ⭐ MODIFIED: Renamed to reflect it's for *Proposed* items ---
+  const handleRerollProposedProject = (projectId: string) => {
     const projectToReassign = projects.find((p) => p.id === projectId);
     if (!projectToReassign) return;
 
@@ -459,7 +506,7 @@ export default function AssignmentsPage() {
         return;
       }
       team1 = relaxedTeam1;
-      team2 = team2ResultRelaxed.team;
+      team2 = relaxedTeam1; // <-- Bug was here, fixed to team2ResultRelaxed.team
     }
 
     // Success!
@@ -490,46 +537,80 @@ export default function AssignmentsPage() {
     );
   };
 
+  // --- ⭐ FIXED FUNCTION ---
+  // This function is now hardened to prevent crashes. It safely
+  // checks for team names before trying to use them.
   const handleManualAssign = async () => {
-    if (!selectedProject || !selectedTeam) {
-      alert('Please select both a project and a team.');
+    if (!selectedProject || !selectedTeam1 || !selectedTeam2) {
+      alert('Please select a project and two different teams.');
       return;
     }
+
+    if (selectedTeam1 === selectedTeam2) {
+      alert('Please select two *different* teams.');
+      return;
+    }
+    
     const project = projects.find((p) => p.id === selectedProject);
     if (!project) {
       alert('Project not found.');
       return;
     }
 
-    let currentLoad = 0;
-    projects.forEach(p => {
-      if (p.testAssignments) {
-        p.testAssignments.forEach(a => {
-          if (a.assignedTo.id === selectedTeam) {
-            currentLoad++;
-          }
-        });
-      }
-    });
+    if (project.team.id === selectedTeam1 || project.team.id === selectedTeam2) {
+       alert('A team cannot test its own project.');
+       return;
+    }
 
-    if (currentLoad >= 2) {
-      alert(`Assignment failed: This team (${teams.find(t => t.id === selectedTeam)?.name}) is already assigned to test ${currentLoad} projects.`);
+    // --- SAFE CHECKS (FIX 1) ---
+    // Safely get team names to prevent crash
+    const team1Name = teams.find(t => t.id === selectedTeam1)?.name;
+    const team2Name = teams.find(t => t.id === selectedTeam2)?.name;
+
+    if (!team1Name || !team2Name) {
+      alert('Error: Could not find the selected team names. Please refresh.');
+      return;
+    }
+    // --- END SAFE CHECKS ---
+
+
+    // Check load for Team 1
+    const load1 = getTeamLoad(selectedTeam1, projects,null);
+    if (load1 >= 2) {
+      alert(`Assignment failed: Team 1 (${team1Name}) is already at its 2-project limit.`);
       return;
     }
 
+    // Check load for Team 2
+    const load2 = getTeamLoad(selectedTeam2, projects,null);
+    if (load2 >= 2) {
+      alert(`Assignment failed: Team 2 (${team2Name}) is already at its 2-project limit.`);
+      return;
+    }
+    
     setLoading(true);
     try {
+      // --- (FIX 2) ---
+      // Use the safe team names
+      const newAssignments = [
+        { teamId: selectedTeam1, teamName: team1Name },
+        { teamId: selectedTeam2, teamName: team2Name },
+      ];
+
       // @ts-ignore
-      const result = await manualAssignProject(
+      // Call the correct service function
+      const result = await replaceProjectAssignments(
         selectedProject,
-        selectedTeam,
-        project.team.id
+        newAssignments
       );
+
+      // @ts-ignore
       if (result.success) {
-        alert('Project assigned successfully!');
+        alert('Project assigned to both teams successfully!');
         fetchData(); 
         setSelectedProject('');
-        setSelectedTeam('');
+        setSelectedTeam1('');
+        setSelectedTeam2('');
       } else {
         // @ts-ignore
         alert(`Assignment failed: ${result.error}`);
@@ -541,6 +622,114 @@ export default function AssignmentsPage() {
       setLoading(false);
     }
   };
+
+  // --- NEW: Functions to control the reassign modal ---
+  const openReassignModal = (project: Project) => {
+    if (hasProposedChanges) {
+      alert("Please confirm or cancel pending changes before reassigning.");
+      return;
+    }
+    setProjectToReassign(project);
+    // Pre-fill modal with current assignments
+    setReassignTeam1(project.testAssignments?.[0]?.assignedTo.id || '');
+    setReassignTeam2(project.testAssignments?.[1]?.assignedTo.id || '');
+    setIsReassignModalOpen(true);
+  };
+
+  const closeReassignModal = () => {
+    setIsReassignModalOpen(false);
+    setProjectToReassign(null);
+    setReassignTeam1('');
+    setReassignTeam2('');
+  };
+
+  // --- ⭐ FIXED FUNCTION ---
+
+  const handleConfirmReassignment = async () => {
+    if (!projectToReassign) return;
+
+    // 1. Check for duplicates (and ignore "NONE" or empty strings)
+    if (reassignTeam1 && reassignTeam1 !== "NONE" && reassignTeam1 === reassignTeam2) {
+        alert('You cannot assign the same team twice.');
+        return;
+    }
+
+    // 2. Check for self-assignment
+    if (reassignTeam1 === projectToReassign.team.id || reassignTeam2 === projectToReassign.team.id) {
+        alert('A team cannot test its own project.');
+        return;
+    }
+
+    setLoading(true);
+    const newAssignments = [];
+    
+    try {
+      // 3. Process Team 1
+      if (reassignTeam1 && reassignTeam1 !== "NONE") {
+          const team1Name = teams.find(t => t.id === reassignTeam1)?.name;
+          if (!team1Name) {
+              throw new Error('Error: Could not find the name for Team 1.');
+          }
+          // Check load
+          const load1 = getTeamLoad(reassignTeam1, projects,projectToReassign.id);
+          if (load1 >= 2) {
+              throw new Error(`Assignment failed: Team 1 (${team1Name}) is already at its 2-project limit.`);
+          }
+          newAssignments.push({ teamId: reassignTeam1, teamName: team1Name });
+      }
+
+      // 4. Process Team 2
+      if (reassignTeam2 && reassignTeam2 !== "NONE") {
+          const team2Name = teams.find(t => t.id === reassignTeam2)?.name;
+          if (!team2Name) {
+              throw new Error('Error: Could not find the name for Team 2.');
+          }
+          // Check load
+          const load2 = getTeamLoad(reassignTeam2, projects,projectToReassign.id);
+          if (load2 >= 2) {
+              throw new Error(`Assignment failed: Team 2 (${team2Name}) is already at its 2-project limit.`);
+          }
+          newAssignments.push({ teamId: reassignTeam2, teamName: team2Name });
+      }
+
+      // 5. Confirm the action with the user
+      let confirmMessage = "";
+      if (newAssignments.length === 0) {
+          confirmMessage = "Are you sure you want to clear all assignments? This will make the project 'Unassigned'.";
+      } else if (newAssignments.length === 1) {
+          confirmMessage = `Are you sure you want to assign this project to only one team (${newAssignments[0].teamName})?`;
+      } else {
+          confirmMessage = `Are you sure you want to assign this project to ${newAssignments[0].teamName} and ${newAssignments[1].teamName}?`;
+      }
+
+      if (!confirm(confirmMessage)) {
+          setLoading(false);
+          return;
+      }
+      
+      // 6. Call the replaceProjectAssignments function
+      const result = await replaceProjectAssignments(
+          projectToReassign.id,
+          newAssignments // This array can now have 0, 1, or 2 teams
+      );
+
+      // @ts-ignore
+      if (result.success) {
+          alert('Project reassigned successfully!');
+          closeReassignModal();
+          fetchData();
+      } else {
+          // @ts-ignore
+          throw new Error(result.error);
+      }
+    } catch (error: any) {
+        console.error('Error during reassignment: ', error);
+        alert(`Reassignment failed: ${error.message}`);
+    } finally {
+        setLoading(false);
+    }
+  };
+
 
   const unassignedProjectsList = projects.filter(
     (p) => !p.testAssignments || p.testAssignments.length === 0
@@ -759,26 +948,35 @@ export default function AssignmentsPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4">
+                      {/* --- MODIFIED ACTIONS --- */}
                       {project.testAssignments &&
                       project.testAssignments.length > 0 &&
                       project.testAssignments[0].isProposed ? (
                         <button 
-                          onClick={() => handleReassignSingleProject(project.id)}
-                          className="px-4 py-2 bg-white border-2 border-blue-500 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-50"
+                          onClick={() => handleRerollProposedProject(project.id)}
+                          className="px-4 py-2 bg-white border-2 border-blue-500 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-50 flex items-center gap-2"
                         >
-                          Change Teams
+                          <RefreshCw className="w-4 h-4" />
+                          Change
+                        </button>
+                      ) : project.testAssignments &&
+                        project.testAssignments.length > 0 ? (
+                        <button
+                          onClick={() => openReassignModal(project)}
+                          disabled={hasProposedChanges}
+                          className="px-4 py-2 bg-white border-2 border-gray-400 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Reassign
                         </button>
                       ) : (
                         <button
                           disabled
-                          className="px-4 py-2 bg-gray-100 border-2 border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
+                          className="px-4 py-2 bg-gray-100 border-2 border-gray-300 text-gray-400 rounded-lg text-sm font-medium disabled:opacity-60"
                         >
-                          {project.testAssignments &&
-                          project.testAssignments.length > 0
-                            ? 'Reassign'
-                            : 'Assign Team'}
+                          Assign Team
                         </button>
                       )}
+                      {/* --- END MODIFIED ACTIONS --- */}
                     </td>
                   </tr>
                 ))}
@@ -787,10 +985,10 @@ export default function AssignmentsPage() {
           </div>
         </div>
 
-        {/* Manual Assignment */}
+        {/* --- MODIFIED: Manual Assignment Section --- */}
         <div className="mt-6 bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
           <h2 className="text-xl font-bold text-gray-800 mb-4">
-            Manual Assignment
+            Manual Assignment (for Unassigned Projects)
           </h2>
           {hasProposedChanges && (
             <div className="mb-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
@@ -799,7 +997,7 @@ export default function AssignmentsPage() {
               </p>
             </div>
           )}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <label className="block text-gray-700 mb-2 font-medium text-sm">
                 Select Project
@@ -820,20 +1018,45 @@ export default function AssignmentsPage() {
             </div>
             <div>
               <label className="block text-gray-700 mb-2 font-medium text-sm">
-                Assign To Team
+                Assign To Team 1
               </label>
               <select
-                value={selectedTeam}
-                onChange={(e) => setSelectedTeam(e.target.value)}
-                disabled={hasProposedChanges}
+                value={selectedTeam1}
+                onChange={(e) => setSelectedTeam1(e.target.value)}
+                disabled={hasProposedChanges || !selectedProject}
                 className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg text-gray-800 focus:outline-none focus:border-red-800 disabled:opacity-50"
               >
-                <option value="">Select testing team...</option>
+                <option value="">Select testing team 1...</option>
                 {availableTeams
                   .filter(
                     (t) =>
                       t.id !==
                       projects.find((p) => p.id === selectedProject)?.team.id
+                  )
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} (Group {t.subgroup.name})
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-gray-700 mb-2 font-medium text-sm">
+                Assign To Team 2
+              </label>
+              <select
+                value={selectedTeam2}
+                onChange={(e) => setSelectedTeam2(e.target.value)}
+                disabled={hasProposedChanges || !selectedProject || !selectedTeam1}
+                className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg text-gray-800 focus:outline-none focus:border-red-800 disabled:opacity-50"
+              >
+                <option value="">Select testing team 2...</option>
+                {availableTeams
+                  .filter(
+                    (t) =>
+                      t.id !==
+                        projects.find((p) => p.id === selectedProject)?.team.id &&
+                      t.id !== selectedTeam1 // <-- Filters out team 1
                   )
                   .map((t) => (
                     <option key={t.id} value={t.id}>
@@ -854,11 +1077,100 @@ export default function AssignmentsPage() {
           </div>
           <div className="mt-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
             <p className="text-yellow-800 text-sm">
-              <strong>Warning:</strong> Manual assignment only adds **one** team and will fail if the team is already at its 2-project limit.
+              <strong>Warning:</strong> Manual assignment will add **two** testing teams and will fail if either team is already at its 2-project limit.
             </p>
           </div>
         </div>
       </div>
+
+      {/* --- NEW: Reassignment Modal --- */}
+      {isReassignModalOpen && projectToReassign && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg border-2 border-gray-300">
+            <div className="px-6 py-5 border-b-2 border-gray-300">
+              <h2 className="text-xl font-bold text-gray-800">Reassign Project</h2>
+              <p className="text-gray-600 text-sm mt-1">
+                Project: <span className="font-medium text-red-800">{projectToReassign.title}</span>
+              </p>
+              <p className="text-gray-600 text-sm">
+                Owned by: <span className="font-medium">{projectToReassign.team.name}</span>
+              </p>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
+                <p className="text-yellow-800 text-sm">
+                  <strong>Note:</strong> You are replacing the existing assignments. The new teams you select must not have 2 projects already.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-700 mb-2 font-medium text-sm">
+                  Assign To Team 1
+                </label>
+                <select
+                  value={reassignTeam1}
+                  onChange={(e) => setReassignTeam1(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg text-gray-800 focus:outline-none focus:border-red-800"
+                >
+                  <option value="">Select testing team 1...</option>
+                  <option value="NONE">-- Clear Assignment --</option>
+                  {availableTeams
+                    .filter((t) => t.id !== projectToReassign.team.id)
+                    .map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} (Group {t.subgroup.name})
+                      </option>
+                    ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-gray-700 mb-2 font-medium text-sm">
+                  Assign To Team 2
+                </label>
+                <select
+                  value={reassignTeam2}
+                  onChange={(e) => setReassignTeam2(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg text-gray-800 focus:outline-none focus:border-red-800 disabled:opacity-50"
+                >
+                  <option value="">Select testing team 2...</option>
+                  <option value="NONE">-- Clear Assignment --</option>
+                  {availableTeams
+                    .filter(
+                      (t) =>
+                        t.id !== projectToReassign.team.id &&
+                        (reassignTeam1 === "NONE" ? true : t.id !== reassignTeam1)
+                    )
+                    .map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} (Group {t.subgroup.name})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-gray-50 border-t-2 border-gray-300 flex justify-end gap-3 rounded-b-xl">
+              <button
+                onClick={closeReassignModal}
+                disabled={loading}
+                className="px-5 py-2 bg-white border-2 border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmReassignment}
+                disabled={loading}
+                className="px-5 py-2 bg-red-800 hover:bg-red-900 text-white font-semibold rounded-lg disabled:opacity-50"
+              >
+                {loading ? 'Confirming...' : 'Confirm Reassignment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* --- END REASSIGNMENT MODAL --- */}
     </div>
   );
 }

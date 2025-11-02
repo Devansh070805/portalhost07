@@ -2,7 +2,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FileText, CheckCircle, Clock, Users, ExternalLink, ClipboardCheck, Layers } from 'lucide-react';
+import { 
+  FileText, CheckCircle, Clock, Users, ExternalLink, 
+  ClipboardCheck, Layers, Trash2,
+  Inbox as InboxIcon,
+  AlertTriangle
+} from 'lucide-react';
 import Header from '@/components/Header';
 import AuthCheck from '@/components/AuthCheck';
 import Link from 'next/link';
@@ -11,20 +16,33 @@ import { useRouter } from 'next/navigation';
 // Import our new components and service functions
 import InviteHandler from '@/components/InviteHandler';
 import TeamManagement from '@/components/TeamManagement';
-import ProjectDetailsModal from '@/components/ProjectDetailsModal'; 
 import { getTeamDetails } from '../../../services/teams'; // Adjust path
 import { getPendingInvites } from '../../../services/invites'; // Adjust path
-import { getProjectsByTeam, getProjectsAssignedToTeam } from '../../../services/projects'; // Adjust path
-import { getTestCaseStats } from 'services/testcases';
+import { 
+  getProjectsByTeam, 
+  getProjectsAssignedToTeam, 
+  deleteProject 
+} from '../../../services/projects'; // Adjust path
+import { getTestCaseStats } from '../../../services/testcases'; // Adjust path
 
-// Define full types
+// --- (CHANGE 1) ---
+// --- Make sure you are IMPORTING the Report type from Inbox.tsx ---
+import Inbox, { type Report } from '@/components/Inbox'; // Adjust path as needed
+import {
+    getReportsForUploadingTeam,
+    getReportsForTestingTeam
+} from '../../../services/inbox'; // Adjust path as needed
+
+const PROJECT_SUBMISSION_LIMIT = 1;
+
+// --- Define full types ---
 interface Project {
   id: string;
   title: string;
-  status: string; // Assuming status comes from the doc
+  status: string; 
   deployedLink?: string;
   githubLink?: string;
-  submissionTime: any; // Firestore timestamp
+  submissionTime: any; 
   testCases?: any[];
 }
 
@@ -36,40 +54,46 @@ interface Team {
 }
 
 interface Assignment {
-  id: string; // Assignment ID
-  project: { // Project being tested
+  id: string; 
+  project: { 
     id: string;
     title: string;
-    // ... add other project fields if needed by UI ...
   };
-  originalTeam: { // Team that submitted the project
+  originalTeam: { 
     id: string;
     teamName: string;
-    // ... add other team fields if needed ...
   };
-  status: string; // Status of the assignment (e.g., 'ASSIGNED', 'COMPLETED')
+  status: string; 
 }
+
+// --- (CHANGE 2) ---
+// --- DELETE any local 'interface Report' that was here ---
+// This was the cause of your error.
 
 export default function StudentDashboard() {
   const router = useRouter();
 
-  // New state to manage auth and roles
+  // Auth state
   const [userId, setUserId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userName, setUserName] = useState('');
   const [studentType, setStudentType] = useState<string | null>(null);
   const [teamId, setTeamId] = useState<string | null>(null);
 
-  // State for data
+  // Data state
   const [projects, setProjects] = useState<Project[]>([]);
   const [teamDetails, setTeamDetails] = useState<Team | null>(null);
   const [pendingInvites, setPendingInvites] = useState<any[]>([]);
   
-  // --- FIXED: Updated stats state definition ---
+  // --- Inbox State (This now correctly uses the imported Report type) ---
+  const [uploadingReports, setUploadingReports] = useState<Report[]>([]);
+  const [testingReports, setTestingReports] = useState<Report[]>([]);
+
+  // Stats state
   const [stats, setStats] = useState({
     totalProjectsSubmitted: 0,
     teamMembers: 0,
-    activeTestingProjects: 0, // Replaced assignedProjectTitle
+    activeTestingProjects: 0, 
     totalTestCases: 0,
     testCasesPassed: 0,
     testCasesFailed: 0,
@@ -78,37 +102,29 @@ export default function StudentDashboard() {
 
   const [loading, setLoading] = useState(true);
 
-  // This useEffect is now the main "router"
+  // Auth/Router useEffect (Unchanged)
   useEffect(() => {
-    // 1. Get all user data from localStorage
     const storedUserId = localStorage.getItem('userId');
     const storedUserEmail = localStorage.getItem('userEmail');
     const storedUserName = localStorage.getItem('userName') || 'Student';
-    const storedStudentType = localStorage.getItem('studentType'); // 'LEADER' or 'MEMBER'
+    const storedStudentType = localStorage.getItem('studentType');
     const storedTeamId = localStorage.getItem('teamId');
 
-    // 2. Set essential state
     setUserId(storedUserId);
     setUserEmail(storedUserEmail);
     setUserName(storedUserName);
     setStudentType(storedStudentType);
     setTeamId(storedTeamId);
 
-    // 3. Main Logic Branch
     if (!storedUserId || !storedStudentType) {
-      // This shouldn't happen if AuthCheck is working, but it's safe
       router.push('/login');
       return;
     }
-
     if (storedStudentType === 'LEADER' && !storedTeamId) {
-      // Leader without a team must create one
       router.push('/create-team');
       return;
     }
-
     if (storedStudentType === 'MEMBER' && !storedTeamId) {
-      // Member without a team: check for invites
       if (storedUserEmail) {
         getPendingInvites(storedUserEmail).then((invites) => {
           setPendingInvites(invites);
@@ -117,31 +133,34 @@ export default function StudentDashboard() {
       }
       return;
     }
-
     if (storedTeamId) {
-      // User is on a team, fetch all dashboard data
       fetchDashboardData(storedTeamId);
     }
-  }, [router]); // Re-run if router changes
+  }, [router]); 
 
-  // New function to fetch all data once we know user is on a team
+  // Data Fetching Function (Unchanged logic)
   const fetchDashboardData = async (teamId: string) => {
+    setLoading(true);
     try {
-        // Fetch Projects SUBMITTED BY team, Team Details, and Projects ASSIGNED TO team
-        const [projectsSubmittedData, teamData, projectsAssignedData] = await Promise.all([
+        const [
+            projectsSubmittedData, 
+            teamData, 
+            projectsAssignedData,
+            uploadingReportsData,
+            testingReportsData
+        ] = await Promise.all([
             getProjectsByTeam(teamId),
             getTeamDetails(teamId),
-            getProjectsAssignedToTeam(teamId) // Fetch assignments for this team
+            getProjectsAssignedToTeam(teamId),
+            getReportsForUploadingTeam(teamId),
+            getReportsForTestingTeam(teamId)
         ]);
 
         const submittedProjects = (projectsSubmittedData || []) as Project[];
         const teamInfo = teamData as Team;
-        const assignments = (projectsAssignedData || []) as Assignment[]; // Cast assignments
+        const assignments = (projectsAssignedData || []) as Assignment[]; 
 
-        // Find the *single* active assignment (first one that's not 'COMPLETED')
         const activeAssignments = assignments.filter(a => a.status !== 'COMPLETED');
-
-        // [Original commented code removed for brevity]
 
         let totalStats = { total: 0, pass: 0, fail: 0, pending: 0 };
         for (const assignment of activeAssignments) {
@@ -153,15 +172,15 @@ export default function StudentDashboard() {
         }
         setProjects(submittedProjects);
         setTeamDetails(teamInfo);
-
-        // --- FIXED: Removed stray line "activeTestingProjects: 0," ---
-
-        // [Original commented setStats removed for brevity]
+        
+        // Set inbox state
+        setUploadingReports(uploadingReportsData as Report[]);
+        setTestingReports(testingReportsData as Report[]);
         
         setStats({
           totalProjectsSubmitted: submittedProjects.length,
           teamMembers: teamInfo?.teamMembers?.length || 0,
-          activeTestingProjects: activeAssignments.length, // Store the count
+          activeTestingProjects: activeAssignments.length, 
           totalTestCases: totalStats.total,
           testCasesPassed: totalStats.pass,
           testCasesFailed: totalStats.fail,
@@ -170,35 +189,50 @@ export default function StudentDashboard() {
 
     } catch (error) {
         console.error('Error fetching dashboard data:', error);
-        // --- FIXED: Updated stats reset to match new shape ---
-        setStats({ // Reset stats on error
+        setStats({ 
             totalProjectsSubmitted: 0, teamMembers: 0, activeTestingProjects: 0,
             totalTestCases: 0, testCasesPassed: 0, testCasesFailed: 0, testCasesPending: 0
         });
     } finally {
         setLoading(false);
     }
+  };
+
+  // Delete Project Handler (Unchanged)
+  const handleDeleteProject = async (projectId: string) => {
+    if (window.confirm('Are you sure you want to delete this project? This will also delete all related testing assignments. This action cannot be undone.')) {
+      try {
+        await deleteProject(projectId);
+        if (teamId) {
+          fetchDashboardData(teamId);
+        }
+      } catch (error) {
+        console.error('Error deleting project:', error);
+      }
+    }
+  };
+
+  // Helper Functions (Unchanged)
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'COMPLETED': return 'bg-green-100 text-green-700';
+    case 'ASSIGNED': return 'bg-blue-100 text-blue-700';
+    case 'UNASSIGNED': return 'bg-yellow-100 text-yellow-700';
+    case 'BLOCKED_LINK': return 'bg-red-100 text-red-700';
+    default: return 'bg-gray-100 text-gray-700';
+  }
 };
 
-  // --- Helper Functions (unchanged) ---
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'COMPLETED': return 'bg-green-100 text-green-700';
-      case 'TESTING': return 'bg-blue-100 text-blue-700';
-      case 'ASSIGNED': return 'bg-yellow-100 text-yellow-700';
-      default: return 'bg-gray-100 text-gray-700';
-    }
-  };
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'COMPLETED': return 'Completed';
-      case 'TESTING': return 'Testing';
-      case 'ASSIGNED': return 'Assigned';
-      case 'PENDING': return 'Pending';
-      default: return status;
-    }
-  };
-  // --- End of Helper Functions ---
+const getStatusText = (status: string) => {
+  switch (status) {
+    case 'COMPLETED': return 'Completed';
+    case 'ASSIGNED': return 'Assigned';
+    case 'UNASSIGNED': return 'Unassigned';
+    case 'BLOCKED_LINK': return 'Blocked';
+    default: return status;
+  }
+};
+
 
 
   // --- Render Logic ---
@@ -216,7 +250,7 @@ export default function StudentDashboard() {
     );
   }
 
-  // Case 1: Member without a team (show invite handler)
+  // Case 1: Member without a team (Unchanged)
   if (!teamId && studentType === 'MEMBER') {
     return (
       <AuthCheck requiredRole="student">
@@ -236,7 +270,7 @@ export default function StudentDashboard() {
           <Header title="Student Dashboard" userRole={userName} />
           
           <div className="max-w-7xl mx-auto px-6 py-8">
-            {/* Navigation Tabs */}
+            {/* Navigation Tabs (Unchanged) */}
             <div className="flex gap-4 mb-6">
               <Link href="/dashboard" className="px-4 py-2 bg-red-800 text-white rounded-lg font-medium">
                 Dashboard
@@ -246,7 +280,7 @@ export default function StudentDashboard() {
               </Link>
             </div>
 
-            {/* Stats Cards - Updated for Single Assignment */}
+            {/* Stats Cards (Unchanged) */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               {/* Total Projects Submitted */}
               <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
@@ -287,18 +321,70 @@ export default function StudentDashboard() {
               </div>
             </div>
 
-            {/* Projects List */}
-            <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
+            {/* Inbox Section (Unchanged) */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                {/* --- Uploader Inbox --- */}
+                <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
+                    <div className="px-6 py-4 border-b-2 border-gray-300 flex items-center justify-between">
+                        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                            <AlertTriangle className="w-5 h-5 text-red-700" />
+                            My Project Issues
+                        </h2>
+                        {uploadingReports.length > 0 && (
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
+                                {uploadingReports.length}
+                            </span>
+                        )}
+                    </div>
+                    {/* THIS LINE (355) IS NOW CORRECT */}
+                    <Inbox
+                        role="uploader"
+                        reports={uploadingReports}
+                        onDataMutate={() => fetchDashboardData(teamId)}
+                    />
+                </div>
+
+                {/* --- Tester Inbox --- */}
+                 <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
+                    <div className="px-6 py-4 border-b-2 border-gray-300 flex items-center justify-between">
+                        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                            <InboxIcon className="w-5 h-5 text-blue-700" />
+                            My Filed Reports
+                        </h2>
+                    </div>
+                    {/* THIS LINE IS ALSO NOW CORRECT */}
+                    <Inbox
+                        role="tester"
+                        reports={testingReports}
+                        onDataMutate={() => fetchDashboardData(teamId)}
+                    />
+                </div>
+            </div>
+            {/* --- End of Inbox Section --- */}
+
+
+            {/* Projects List (Unchanged) */}
+            <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm mb-8">
               <div className="px-6 py-4 border-b-2 border-gray-300 flex items-center justify-between">
                 <h2 className="text-xl font-bold text-gray-800">My Projects</h2>
                 
                 {studentType === 'LEADER' && (
-                  <Link 
-                    href="/submission"
-                    className="px-4 py-2 bg-red-800 hover:bg-red-900 text-white rounded-lg text-sm font-medium"
-                  >
-                    + Add New Project
-                  </Link>
+                  projects.length < PROJECT_SUBMISSION_LIMIT ? (
+                    <Link 
+                      href="/submission"
+                      className="px-4 py-2 bg-red-800 hover:bg-red-900 text-white rounded-lg text-sm font-medium"
+                    >
+                      + Add New Project
+                    </Link>
+                  ) : (
+                    <button
+                      disabled
+                      className="px-4 py-2 bg-gray-400 text-white rounded-lg text-sm font-medium cursor-not-allowed"
+                      title="You can only submit one project."
+                    >
+                      Project Limit Reached
+                    </button>
+                  )
                 )}
               </div>
               
@@ -357,12 +443,20 @@ export default function StudentDashboard() {
                                   GitHub
                                 </a>
                               )}
-                              {/* <button className="px-4 py-2 bg-red-800 hover:bg-red-900 text-white rounded-lg text-sm font-medium">
-                                View Details
-                              </button> */}
                             </div>
                           </div>
                         </div>
+
+                        {studentType === 'LEADER' && (
+                          <button
+                            onClick={() => handleDeleteProject(project.id)}
+                            className="ml-4 p-2 text-gray-400 hover:text-red-600 rounded-full hover:bg-red-100 transition-colors flex-shrink-0"
+                            title="Delete Project"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        )}
+
                       </div>
                     </div>
                   ))}
@@ -370,19 +464,17 @@ export default function StudentDashboard() {
               )}
             </div>
 
-            {/* <<< THIS IS THE CORRECTED BLOCK >>> */}
+            {/* Team Management (Unchanged) */}
             { teamDetails && (
               <TeamManagement 
                 teamId={teamId}
                 teamName={teamDetails.teamName}
-                // Pass the leader's ID (which is a DocumentReference)
+                // @ts-ignore
                 leaderId={teamDetails.teamLeader.id} 
-                // Pass the array of member references
                 teamMemberRefs={teamDetails.teamMembers}
                 currentUserId={userId!}
               />
             )}
-            {/* <<< END OF CORRECTED BLOCK >>> */}
 
           </div>
         </div>
@@ -390,7 +482,7 @@ export default function StudentDashboard() {
     );
   }
 
-  // Fallback case (shouldn't be reached, but good to have)
+  // Fallback case (Unchanged)
   return (
     <AuthCheck requiredRole="student">
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
