@@ -179,6 +179,9 @@ export default function StudentDashboard() {
         
         setStats({
           totalProjectsSubmitted: submittedProjects.length,
+          // ---
+          // --- FIX #1: Removed the "+ 1" ---
+          // ---
           teamMembers: teamInfo?.teamMembers?.length || 0,
           activeTestingProjects: activeAssignments.length, 
           totalTestCases: totalStats.total,
@@ -256,7 +259,26 @@ const getStatusText = (status: string) => {
       <AuthCheck requiredRole="student">
         <div className="min-h-screen bg-gray-100">
           <Header title="Student Dashboard" userRole={userName} />
-          {userId && <InviteHandler invites={pendingInvites} userId={userId} />}
+          {userId && (
+  <InviteHandler
+    invites={pendingInvites}
+    userId={userId}
+    onAccepted={async (joinedTeamId?: string) => {
+      // refresh pending invites for the invitee
+      if (userEmail) {
+        const refreshed = await getPendingInvites(userEmail);
+        setPendingInvites(refreshed || []);
+      }
+      // if joined a team, set team state and load its dashboard data
+      if (joinedTeamId) {
+        setTeamId(joinedTeamId);
+        localStorage.setItem('teamId', joinedTeamId);
+        localStorage.setItem('studentType', 'MEMBER');
+        await fetchDashboardData(joinedTeamId);
+      }
+    }}
+  />
+)}
         </div>
       </AuthCheck>
     );
@@ -471,6 +493,9 @@ const getStatusText = (status: string) => {
                 teamName={teamDetails.teamName}
                 // @ts-ignore
                 leaderId={teamDetails.teamLeader.id} 
+                // ---
+                // --- FIX #2: Pass the members array directly ---
+                // ---
                 teamMemberRefs={teamDetails.teamMembers}
                 currentUserId={userId!}
               />

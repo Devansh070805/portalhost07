@@ -184,10 +184,11 @@ export async function acceptInvite(inviteId, memberId) {
         teamName: teamName, // Store the name string
       });
 
-      // b) Update the team's document to add the new member
+      // b) Update the team's document to add the new member (correct field name)
       transaction.update(teamRef, {
-        members: arrayUnion(studentRef), // Add the student reference
+        teamMembers: arrayUnion(studentRef), // Add the student reference to the expected field
       });
+
 
       // c) Delete the invite so it can't be used again
       transaction.delete(inviteRef);
