@@ -1085,7 +1085,7 @@ export default function AssignmentsPage() {
 
       {/* --- NEW: Reassignment Modal --- */}
       {isReassignModalOpen && projectToReassign && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-gray-100 bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg border-2 border-gray-300">
             <div className="px-6 py-5 border-b-2 border-gray-300">
               <h2 className="text-xl font-bold text-gray-800">Reassign Project</h2>
