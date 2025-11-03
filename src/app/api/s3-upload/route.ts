@@ -5,10 +5,10 @@ import { randomUUID } from "crypto";
 
 // Initialize the S3 client
 const s3Client = new S3Client({
-    region: process.env.S3_BUCKET_REGION!,
+    region: process.env.S3_REGION!, // <-- CHANGED
     credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.AWS_SECRET_KEY_!,
+        accessKeyId: process.env.S3_ACCESS_KEY!, // <-- CHANGED
+        secretAccessKey: process.env.S3_SECRET_KEY!, // <-- CHANGED
     },
 });
 
@@ -37,8 +37,7 @@ export async function POST(request: Request) {
         const presignedUploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 }); // Expires in 1 hour
 
         // Generate the final public URL
-        // Note: Ensure your bucket has public read access for this to work.
-        const publicFileUrl = `https://${bucketName}.s3.${process.env.S3_BUCKET_REGION}.amazonaws.com/${uniqueKey}`;
+        const publicFileUrl = `https://${bucketName}.s3.${process.env.S3_REGION}.amazonaws.com/${uniqueKey}`; // <-- CHANGED
 
         return NextResponse.json({
             presignedUploadUrl,

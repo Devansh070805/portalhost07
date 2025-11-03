@@ -1,13 +1,12 @@
-// src/app/api/s3-delete/route.ts
 import { NextResponse } from 'next/server';
 import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
-// Initialize the S3 client (same as your upload route)
+// Initialize the S3 client
 const s3Client = new S3Client({
-    region: process.env.S3_BUCKET_REGION!,
+    region: process.env.S3_REGION!, // <-- CHANGED
     credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.AWS_SECRET_KEY_!,
+        accessKeyId: process.env.S3_ACCESS_KEY!, // <-- CHANGED
+        secretAccessKey: process.env.S3_SECRET_KEY!, // <-- CHANGED
     },
 });
 
