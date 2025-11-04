@@ -34,13 +34,13 @@ export default function StudentRegister() {
     setLoading(true);
 
     // --- Thapar Email Validation ---
-    // if (!formData.email.toLowerCase().endsWith('@thapar.edu')) {
-    //   setError(
-    //     'Invalid email. Please use your @thapar.edu email address to register.'
-    //   );
-    //   setLoading(false);
-    //   return;
-    // }
+    if (!formData.email.toLowerCase().endsWith('@thapar.edu')) {
+      setError(
+        'Invalid email. Please use your @thapar.edu email address to register.'
+      );
+      setLoading(false);
+      return;
+    }
     // --- End of validation ---
 
     if (!formData.subgroup.trim()) {
