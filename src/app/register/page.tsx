@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Users, Code, ArrowLeft } from 'lucide-react';
-// <<< 1. IMPORT YOUR createStudent FUNCTION >>>
 import { createStudent } from '../../../services/auth.js'; // Adjust path if needed
 
 export default function StudentRegister() {
@@ -18,6 +17,8 @@ export default function StudentRegister() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const subgroupsUndertaking = ['3Q15', '3C24', '3Q26', '3P11', '3C16'];
+
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
@@ -27,24 +28,19 @@ export default function StudentRegister() {
     });
   };
 
-  // <<< 2. THIS FUNCTION IS UNCHANGED >>>
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
 
-    // --- Thapar Email Validation ---
     if (!formData.email.toLowerCase().endsWith('@thapar.edu')) {
-      setError(
-        'Invalid email. Please use your @thapar.edu email address to register.'
-      );
+      setError('Invalid email. Please use your @thapar.edu email address to register.');
       setLoading(false);
       return;
     }
-    // --- End of validation ---
 
     if (!formData.subgroup.trim()) {
-      setError('Please enter a subgroup name');
+      setError('Please select a subgroup name');
       setLoading(false);
       return;
     }
@@ -53,7 +49,7 @@ export default function StudentRegister() {
       const newUserId = await createStudent(
         formData.name,
         formData.email,
-        formData.type, // 'MEMBER' or 'LEADER'
+        formData.type,
         formData.password,
         formData.subgroup
       );
@@ -71,16 +67,10 @@ export default function StudentRegister() {
       setLoading(false);
     }
   };
-  // <<< END OF UPDATED FUNCTION >>>
 
-  // --- ⭐ MODIFIED: Applying new split-screen layout ---
   return (
-    // The outer container handles mobile (flex-col) and desktop (md:flex-row)
     <div className="min-h-screen flex flex-col md:flex-row">
-      {/* --- ⭐ Left Branding Side ---
-      * 'md:h-screen' makes it full height on desktop.
-      * 'md:sticky md:top-0' could also work, but h-screen is cleaner here.
-      --- */}
+      {/* Left branding side */}
       <div className="w-full md:w-1/2 bg-red-900 text-white p-8 md:p-12 flex flex-col md:h-screen">
         <div className="my-auto">
           <div className="mb-6">
@@ -91,17 +81,12 @@ export default function StudentRegister() {
           </h1>
           <p className="text-2xl text-red-200 font-light mb-6">UCS503</p>
           <p className="text-lg text-red-100 max-w-md">
-            Create your student account to register your team and submit your
-            project.
+            Create your student account to register your team and submit your project.
           </p>
         </div>
       </div>
 
-      {/* --- ⭐ Right Form Side ---
-      * 'md:h-screen' makes it full height on desktop.
-      * 'md:overflow-y-auto' makes ONLY this panel scrollable.
-      * 'md:items-start' aligns the form to the top on desktop (so you see the start of the form).
-      --- */}
+      {/* Right form side */}
       <div className="w-full md:w-1/2 bg-gray-100 flex items-center md:items-start justify-center p-8 md:p-12 md:h-screen md:overflow-y-auto">
         <div className="max-w-md w-full">
           <button
@@ -114,19 +99,13 @@ export default function StudentRegister() {
           </button>
 
           <div className="text-left mb-8">
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">
-              Student Registration
-            </h1>
-            <p className="text-gray-600">
-              Create your account to get started.
-            </p>
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">Student Registration</h1>
+            <p className="text-gray-600">Create your account to get started.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-gray-700 mb-2 font-medium">
-                Name
-              </label>
+              <label className="block text-gray-700 mb-2 font-medium">Name</label>
               <input
                 type="text"
                 name="name"
@@ -139,9 +118,7 @@ export default function StudentRegister() {
             </div>
 
             <div>
-              <label className="block text-gray-700 mb-2 font-medium">
-                Email
-              </label>
+              <label className="block text-gray-700 mb-2 font-medium">Email</label>
               <input
                 type="email"
                 name="email"
@@ -154,9 +131,7 @@ export default function StudentRegister() {
             </div>
 
             <div>
-              <label className="block text-gray-700 mb-2 font-medium">
-                Password
-              </label>
+              <label className="block text-gray-700 mb-2 font-medium">Password</label>
               <input
                 type="password"
                 name="password"
@@ -169,9 +144,7 @@ export default function StudentRegister() {
             </div>
 
             <div>
-              <label className="block text-gray-700 mb-2 font-medium">
-                Role
-              </label>
+              <label className="block text-gray-700 mb-2 font-medium">Role</label>
               <select
                 name="type"
                 value={formData.type}
@@ -184,19 +157,25 @@ export default function StudentRegister() {
               </select>
             </div>
 
+            {/* ✅ UPDATED FIELD: Subgroup dropdown */}
             <div>
               <label className="block text-gray-700 mb-2 font-medium">
                 Subgroup Name
               </label>
-              <input
-                type="text"
+              <select
                 name="subgroup"
                 value={formData.subgroup}
                 onChange={handleChange}
-                placeholder="Enter your subgroup"
                 required
-                className="w-full px-4 py-3 bg-white border-2 border-gray-300 rounded-lg text-gray-800 placeholder-gray-500 focus:outline-none focus:border-red-800 focus:ring-1 focus:ring-red-800"
-              />
+                className="w-full px-4 py-3 bg-white border-2 border-gray-300 rounded-lg text-gray-800 focus:outline-none focus:border-red-800 focus:ring-1 focus:ring-red-800"
+              >
+                <option value="">Select your subgroup</option>
+                {subgroupsUndertaking.map((group) => (
+                  <option key={group} value={group}>
+                    {group}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {error && (
@@ -218,4 +197,3 @@ export default function StudentRegister() {
     </div>
   );
 }
-
