@@ -83,10 +83,18 @@ export default function LoginPage() {
                         UCS503
                     </p>
                     <p className="text-lg text-red-100 max-w-md">
-                        {userType === null 
-                            ? 'Please select your role on the right to continue.' 
-                            : `You are logging in as a ${userType}.`}
-                    </p>
+  {userType === null 
+    ? (
+        <>
+          Please select your role on the right to continue.
+          <br />
+          For any related queries contact: portaltesting733@gmail.com
+        </>
+      )
+    : `You are logging in as a ${userType}.`
+  }
+</p>
+
                 </div>
             </div>
 
