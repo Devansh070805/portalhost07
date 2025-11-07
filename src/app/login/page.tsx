@@ -7,26 +7,30 @@ import {
     Users,
     BarChart3,
     ArrowLeft,
-    HelpCircle // <-- ADDED
+    HelpCircle
 } from 'lucide-react';
-import { loginUser } from '../../../services/auth.js'; // Adjust path if needed
 import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from '../../../services/firebaseConfig.js'
-import Link from 'next/link'; // <-- ADDED
+import Link from 'next/link';
+
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { getDoc, doc } from 'firebase/firestore';
+import { auth, db } from '../../../services/firebaseConfig.js';
+import { FirebaseError } from "firebase/app";
+
 
 export default function LoginPage() {
     const [userType, setUserType] = useState<'student' | 'faculty' | null>(null);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
-    const [successMessage, setSuccessMessage] = useState<string | null>(null); // <-- ADDED
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const router = useRouter();
 
-    // --- Login logic remains unchanged ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
+        setSuccessMessage(null); // <-- Clear any reset-password messages
         setLoading(true);
 
         if (!email || !password || !userType) {
@@ -36,37 +40,91 @@ export default function LoginPage() {
         }
 
         try {
-            const data = await loginUser(email, password, userType);
-            if (typeof window !== 'undefined') {
-                localStorage.setItem('userType', userType);
-                localStorage.setItem('userEmail', data.email || '');
-                localStorage.setItem('userId', data.id);
-                localStorage.setItem('userName', data.name || '');
-                localStorage.setItem('isAuthenticated', 'true');
-                if (data.teamId) {
-                    localStorage.setItem('teamId', data.teamId);
-                } else {
-                    localStorage.removeItem('teamId');
-                }
-                if (userType === 'student' && data.type) {
-                    localStorage.setItem('studentType', data.type);
-                } else {
-                    localStorage.removeItem('studentType');
-                }
-            }
-            if (userType === 'student') {
-                router.push('/dashboard');
-            } else {
-                router.push('/faculty/dashboard');
-            }
-        } catch (err: any) {
-            console.error('Login error:', err);
-            setError(err.message || 'An error occurred. Please try again.');
-        } finally {
-            setLoading(false);
-        }
+         const userCredential = await signInWithEmailAndPassword(auth, email, password);
+         const user = userCredential.user;
+        
+         await user.reload(); // Refresh auth state
+        
+         // 1️⃣ Fetch Firestore profile to get the rest of user information
+         const userDoc = await getDoc(doc(db, userType === 'student' ? 'students' : 'faculty', user.uid));
+        
+         if (!userDoc.exists()) {
+           setError('Your account profile was not found. Contact admin.');
+           setLoading(false);
+           return;
+         }
+        
+         const data = userDoc.data();
+
+         // 2️⃣ ✅ NEW: Check email verification status
+         // This check applies to both students and faculty, but ONLY if
+         // the 'requiresVerification' flag is true in their Firestore doc.
+         // Existing users (without this flag) will skip this check.
+         if (data.requiresVerification === true && !user.emailVerified) {
+           setError('Your email is not verified yet. Please check your inbox and verify your email before logging in.');
+           setLoading(false);
+           return;
+         }
+        
+         // 3️⃣ Store session data
+         if (typeof window !== 'undefined') {
+           localStorage.setItem('userType', userType);
+           localStorage.setItem('userEmail', user.email || '');
+           localStorage.setItem('userId', user.uid);
+           localStorage.setItem('userName', data.name || '');
+           localStorage.setItem('isAuthenticated', 'true');
+          
+           if (data.teamId) {
+             localStorage.setItem('teamId', data.teamId);
+           } else {
+             localStorage.removeItem('teamId');
+           }
+          
+           if (userType === 'student' && data.type) {
+             localStorage.setItem('studentType', data.type);
+           } else {
+             localStorage.removeItem('studentType');
+           }
+         }
+        
+         // 4️⃣ Redirect after successful login
+         if (userType === 'student') {
+           router.push('/dashboard');
+         } else {
+           router.push('/faculty/dashboard');
+         }
+        
+}        catch (err) {
+  console.error(err);
+
+  if (err instanceof FirebaseError) {
+    switch (err.code) {
+      case "auth/invalid-credential":
+        setError("Incorrect email or password.");
+        break;
+
+      case "auth/invalid-email":
+        setError("Please enter a valid email.");
+        break;
+
+      case "auth/user-disabled":
+        setError("This account has been disabled. Contact admin.");
+        break;
+
+      default:
+        setError("Login failed. Please try again.");
+    }
+  } else {
+    setError("Unexpected error occurred. Try again.");
+  }
+
+  setLoading(false);
+}
+
+
     };
 
+    // --- handlePasswordReset logic remains unchanged ---
     const handlePasswordReset = async () => {
         if (!email) {
             setError('Please enter your email address to reset your password.');
@@ -95,14 +153,12 @@ export default function LoginPage() {
         }
     };
 
-    // --- Updated Responsive Split-Screen Layout ---
+    // --- JSX (Return) remains unchanged ---
     return (
 <div className="min-h-screen flex flex-col md:flex-row bg-black md:bg-white">
             
-            {/* --- ⭐ MODIFIED: Left Branding Side --- */}
-            {/* Removed justify-center, will center content with an inner div */}
+            {/* --- Left Branding Side --- */}
 <div className="w-full md:w-1/2 bg-red-900 text-white p-8 md:p-12 flex flex-col min-h-[50vh] md:min-h-screen">
-                {/* This div with 'my-auto' will center the block vertically */}
                 <div className="my-auto"> 
                     <div className="mb-6">
                         <Code className="w-12 h-12 text-white" />
@@ -113,7 +169,7 @@ export default function LoginPage() {
                     <p className="text-2xl text-red-200 font-light mb-6">
                         UCS503
                     </p>
-                    <p className="text-lg text-red-100 max-w-md">
+                   <p className="text-lg text-red-100 max-w-md">
   {userType === null 
     ? (
         <>
@@ -129,11 +185,9 @@ export default function LoginPage() {
                 </div>
             </div>
 
-            {/* --- Right Form Side (Unchanged) --- */}
-            {/* ADDED 'relative' */}
+            {/* --- Right Form Side --- */}
 <div className="w-full md:w-1/2 bg-gray-100 flex items-center justify-center p-8 md:p-12 relative min-h-[50vh] md:min-h-screen">
                 
-                {/* --- ADDED THIS BLOCK --- */}
                 {userType && (
                     <Link
                         href={userType === 'student' ? '/studentfaq' : '/facultyfaq'}
@@ -143,11 +197,9 @@ export default function LoginPage() {
                         <HelpCircle className="w-6 h-6" />
                     </Link>
                 )}
-                {/* --- END OF ADDED BLOCK --- */}
 
                 <div className="max-w-md w-full">
                     
-                    {/* --- Conditional: Role Selection --- */}
                     {!userType ? (
                         <div>
                             <h2 className="text-3xl font-bold text-gray-800 mb-8">
@@ -183,7 +235,6 @@ export default function LoginPage() {
                         </div>
                     ) : (
                         
-                        /* --- Conditional: Login Form --- */
                         <div>
                             <button 
                                 onClick={() => setUserType(null)}
@@ -228,7 +279,7 @@ export default function LoginPage() {
                                     />
                                 </div>
 
-                                <div className="text-right -mt-2">
+                                 <div className="text-right -mt-2">
                                      <button
                                          type="button"
                                          onClick={handlePasswordReset}

@@ -3,7 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Users, Code, ArrowLeft } from 'lucide-react';
-import { createStudent } from '../../../services/auth.js'; // Adjust path if needed
+// import { createStudent } from '../../../services/auth.js'; // This seems unused
+
+import { auth, db } from '../../../services/firebaseConfig.js'
+import { createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
+import { setDoc, doc } from 'firebase/firestore';
 
 export default function StudentRegister() {
   const router = useRouter();
@@ -15,6 +19,7 @@ export default function StudentRegister() {
     type: 'MEMBER',
   });
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const subgroupsUndertaking = ['3Q15', '3C24', '3Q26', '3P11', '3C16'];
@@ -28,9 +33,10 @@ export default function StudentRegister() {
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSuccessMessage(null);
     setLoading(true);
 
     if (!formData.email.toLowerCase().endsWith('@thapar.edu')) {
@@ -46,28 +52,51 @@ export default function StudentRegister() {
     }
 
     try {
-      const newUserId = await createStudent(
-        formData.name,
+      // 1. Create the user in Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
         formData.email,
-        formData.type,
-        formData.password,
-        formData.subgroup
+        formData.password
       );
+      const user = userCredential.user;
 
-      if (newUserId) {
-        alert('Registration successful! Please login.');
-        router.push('/login');
-      } else {
-        setError('Registration failed. The email might already be in use.');
-      }
-    } catch (err) {
+      // 2. Send the verification email
+      auth.languageCode = 'en';
+      await sendEmailVerification(user);
+
+
+      // 3. Create the student document in Firestore
+      await setDoc(doc(db, 'students', user.uid), {
+        name: formData.name,
+        email: formData.email,
+        type: formData.type,
+        subgroup: formData.subgroup,
+        teamId: null,
+        teamName: null,
+        requiresVerification: true, // <-- ✅ ADDED THIS FLAG
+      });
+
+      // 4. Show a success message instead of redirecting
+      setSuccessMessage(
+        'Registration successful! A verification link has been sent to your email. Please verify your account before logging in.'
+      );
+      // We don't redirect, so the user sees the message
+
+    } catch (err: any) {
       console.error(err);
-      setError('Something went wrong. Please try again.');
+      if (err.code === 'auth/email-already-in-use') {
+        setError('This email address is already in use by another account.');
+      } else if (err.code === 'auth/weak-password') {
+        setError('Password is too weak. Please choose a stronger password.');
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
   };
-
+  
+  // --- JSX (Return) remains unchanged ---
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
       {/* Left branding side */}
@@ -157,7 +186,6 @@ export default function StudentRegister() {
               </select>
             </div>
 
-            {/* ✅ UPDATED FIELD: Subgroup dropdown */}
             <div>
               <label className="block text-gray-700 mb-2 font-medium">
                 Subgroup Name
@@ -177,6 +205,12 @@ export default function StudentRegister() {
                 ))}
               </select>
             </div>
+
+                {successMessage && (
+              <div className="bg-green-50 border-2 border-green-300 rounded-lg p-3">
+                <p className="text-green-800 text-sm">{successMessage}</p>
+              </div>
+            )}
 
             {error && (
               <div className="bg-red-50 border-2 border-red-300 rounded-lg p-3">
