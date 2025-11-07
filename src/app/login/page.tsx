@@ -10,6 +10,8 @@ import {
     HelpCircle // <-- ADDED
 } from 'lucide-react';
 import { loginUser } from '../../../services/auth.js'; // Adjust path if needed
+import { sendPasswordResetEmail } from "firebase/auth";
+import { auth } from '../../../services/firebaseConfig.js'
 import Link from 'next/link'; // <-- ADDED
 
 export default function LoginPage() {
@@ -17,6 +19,7 @@ export default function LoginPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null); // <-- ADDED
     const [loading, setLoading] = useState(false);
     const router = useRouter();
 
@@ -59,6 +62,34 @@ export default function LoginPage() {
         } catch (err: any) {
             console.error('Login error:', err);
             setError(err.message || 'An error occurred. Please try again.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handlePasswordReset = async () => {
+        if (!email) {
+            setError('Please enter your email address to reset your password.');
+            setSuccessMessage(null);
+            return;
+        }
+        
+        setLoading(true);
+        setError(null);
+        setSuccessMessage(null);
+
+        try {
+            await sendPasswordResetEmail(auth, email);
+            setSuccessMessage('Password reset email sent! Please check your inbox (and spam folder).');
+        } catch (err: any) {
+            console.error('Password reset error:', err);
+            if (err.code === 'auth/user-not-found') {
+                setError('No account found with this email address.');
+            } else if (err.code === 'auth/invalid-email') {
+                setError('Please enter a valid email address.');
+            } else {
+                setError('An error occurred. Please try again.');
+            }
         } finally {
             setLoading(false);
         }
@@ -197,6 +228,23 @@ export default function LoginPage() {
                                     />
                                 </div>
 
+                                <div className="text-right -mt-2">
+                                     <button
+                                         type="button"
+                                         onClick={handlePasswordReset}
+                                         disabled={loading}
+                                         className="text-sm font-medium text-red-800 hover:underline disabled:opacity-50"
+                                     >
+                                         Forgot your password?
+                                     </button>
+                                 </div>
+
+                                 {successMessage && (
+        <div className="bg-green-50 border-2 border-green-300 rounded-lg p-3">
+            <p className="text-green-800 text-sm">{successMessage}</p>
+        </div>
+    )}
+
                                 {error && (
                                     <div className="bg-red-50 border-2 border-red-300 rounded-lg p-3">
                                         <p className="text-red-700 text-sm">{error}</p>
@@ -208,7 +256,7 @@ export default function LoginPage() {
                                     className="w-full py-3 bg-red-800 hover:bg-red-900 text-white font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                     disabled={loading}
                                 >
-                                    {loading ? 'Logging in...' : 'Log In'}
+                                    {loading ? 'Processing...' : 'Log In'}
                                 </button>
 
                                 <p className="text-sm text-gray-600 pt-4 text-center">
