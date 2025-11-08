@@ -1,12 +1,13 @@
 // src/app/dashboard/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { 
   FileText, CheckCircle, Clock, Users, ExternalLink, 
   ClipboardCheck, Layers, Trash2,
   Inbox as InboxIcon,
-  AlertTriangle
+  AlertTriangle,
+  Calendar
 } from 'lucide-react';
 import Header from '@/components/Header';
 import AuthCheck from '@/components/AuthCheck';
@@ -24,6 +25,9 @@ import {
   deleteProject 
 } from '../../../services/projects'; // Adjust path
 import { getTestCaseStats } from '../../../services/testcases'; // Adjust path
+
+import { Timestamp } from 'firebase/firestore';
+import { getSubmissionSettings } from '../../../services/settings';
 
 // --- (CHANGE 1) ---
 // --- Make sure you are IMPORTING the Report type from Inbox.tsx ---
@@ -89,6 +93,12 @@ export default function StudentDashboard() {
   const [uploadingReports, setUploadingReports] = useState<Report[]>([]);
   const [testingReports, setTestingReports] = useState<Report[]>([]);
 
+  //states for the deadline part
+  const [submissionDeadline, setSubmissionDeadline] = useState<Timestamp | null>(null);
+  const [allowsSubmissions, setAllowsSubmissions] = useState(true);
+  const [countdown, setCountdown] = useState('');
+  const [isDeadlineSoon, setIsDeadlineSoon] = useState(false);
+
   // Stats state
   const [stats, setStats] = useState({
     totalProjectsSubmitted: 0,
@@ -138,6 +148,46 @@ export default function StudentDashboard() {
     }
   }, [router]); 
 
+  // Countdown Timer useEffect
+  useEffect(() => {
+    if (!submissionDeadline) {
+      setCountdown('');
+      setIsDeadlineSoon(false);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const deadlineTime = submissionDeadline.toDate().getTime();
+      const diff = deadlineTime - now;
+
+      if (diff <= 0) {
+        setCountdown('Deadline has passed.');
+        setIsDeadlineSoon(true);
+        clearInterval(interval);
+        return;
+      }
+
+      if (diff < 3600 * 1000) { // Less than 1 hour
+        setIsDeadlineSoon(true);
+      }
+
+      const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const s = Math.floor((diff % (1000 * 60)) / 1000);
+      
+      let countdownString = '';
+      if (d > 0) countdownString += `${d}d `;
+      if (h > 0 || d > 0) countdownString += `${h}h `;
+      countdownString += `${m}m ${s}s`;
+
+      setCountdown(countdownString);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [submissionDeadline]);
+
   // Data Fetching Function (Unchanged logic)
   const fetchDashboardData = async (teamId: string) => {
     setLoading(true);
@@ -147,13 +197,15 @@ export default function StudentDashboard() {
             teamData, 
             projectsAssignedData,
             uploadingReportsData,
-            testingReportsData
+            testingReportsData,
+            settingsData
         ] = await Promise.all([
             getProjectsByTeam(teamId),
             getTeamDetails(teamId),
             getProjectsAssignedToTeam(teamId),
             getReportsForUploadingTeam(teamId),
-            getReportsForTestingTeam(teamId)
+            getReportsForTestingTeam(teamId),
+            getSubmissionSettings()
         ]);
 
         const submittedProjects = (projectsSubmittedData || []) as Project[];
@@ -172,6 +224,10 @@ export default function StudentDashboard() {
         }
         setProjects(submittedProjects);
         setTeamDetails(teamInfo);
+
+        // Set submission state
+        setSubmissionDeadline(settingsData.deadline);
+        setAllowsSubmissions(settingsData.allowsSubmission);
         
         // Set inbox state
         setUploadingReports(uploadingReportsData as Report[]);
@@ -236,7 +292,17 @@ const getStatusText = (status: string) => {
   }
 };
 
-
+// Helper variables for submission button logic
+  const isDeadlinePassed = submissionDeadline && Date.now() > submissionDeadline.toDate().getTime();
+  const isSubmissionAllowed = allowsSubmissions && !isDeadlinePassed;
+  const canSubmit = studentType === 'LEADER' && projects.length < PROJECT_SUBMISSION_LIMIT && isSubmissionAllowed;
+  
+  const getDisabledTitle = () => {
+    if (projects.length >= PROJECT_SUBMISSION_LIMIT) return 'You can only submit one project.';
+    if (!allowsSubmissions && !isDeadlinePassed) return 'Submissions are currently closed by faculty.';
+    if (isDeadlinePassed) return 'The submission deadline has passed.';
+    return 'Add a new project';
+  };
 
   // --- Render Logic ---
 
@@ -302,6 +368,16 @@ const getStatusText = (status: string) => {
               </Link>
             </div>
 
+            {submissionDeadline && (
+              <div className={`mb-6 p-4 border-2 rounded-xl flex items-center justify-center gap-3 ${isDeadlineSoon ? 'bg-red-50 border-red-200' : 'bg-white border-gray-300'}`}>
+                <Calendar className={`w-5 h-5 ${isDeadlineSoon ? 'text-red-700' : 'text-red-800'}`} />
+                <span className="font-semibold text-gray-800">Submission Deadline:</span>
+                <span className={`font-bold ${isDeadlineSoon ? 'text-red-700' : 'text-gray-900'}`}>
+                  {countdown}
+                </span>
+              </div>
+            )}
+            
             {/* Stats Cards (Unchanged) */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               {/* Total Projects Submitted */}
@@ -391,7 +467,7 @@ const getStatusText = (status: string) => {
                 <h2 className="text-xl font-bold text-gray-800">My Projects</h2>
                 
                 {studentType === 'LEADER' && (
-                  projects.length < PROJECT_SUBMISSION_LIMIT ? (
+                  canSubmit ? (
                     <Link 
                       href="/submission"
                       className="px-4 py-2 bg-red-800 hover:bg-red-900 text-white rounded-lg text-sm font-medium"
@@ -402,9 +478,9 @@ const getStatusText = (status: string) => {
                     <button
                       disabled
                       className="px-4 py-2 bg-gray-400 text-white rounded-lg text-sm font-medium cursor-not-allowed"
-                      title="You can only submit one project."
+                      title={getDisabledTitle()}
                     >
-                      Project Limit Reached
+                      {projects.length >= PROJECT_SUBMISSION_LIMIT ? 'Project Limit Reached' : 'Submissions Closed'}
                     </button>
                   )
                 )}

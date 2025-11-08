@@ -7,7 +7,9 @@ import {
     CheckCircle,
     ChevronRight,
     Search,
-    Inbox as InboxIcon
+    Inbox as InboxIcon,
+    XCircle,
+    Calendar
 } from 'lucide-react';
 import Header from '@/components/Header';
 import AuthCheck from '@/components/AuthCheck';
@@ -17,6 +19,15 @@ import { getAllProjectsForFacultyDashboard } from '../../../../services/projects
 import { getAllTeamsForFaculty } from '../../../../services/teams';
 import { getReportsForFaculty } from '../../../../services/inbox';
 import Inbox, { type Report } from '@/components/Inbox';
+
+import DatePicker from 'react-datepicker';
+import { Timestamp } from 'firebase/firestore'; 
+import { 
+    getSubmissionSettings,
+    setSubmissionDeadline,
+    clearSubmissionDeadline,
+    toggleSubmissions
+} from '../../../../services/settings';
 
 console.log("FacultyDashboard component file is being read.");
 
@@ -53,6 +64,14 @@ export default function FacultyDashboard() {
     const [inboxReports, setInboxReports] = useState<Report[]>([]);
     const [activeTab, setActiveTab] = useState<'overview' | 'inbox'>('overview');
 
+    // State for submission settings
+    const [submissionSettings, setSubmissionSettings] = useState<{
+        allowsSubmission: boolean;
+        deadline: Timestamp | null;
+    }>({ allowsSubmission: true, deadline: null });
+    const [selectedDeadline, setSelectedDeadline] = useState<Date | null>(new Date());
+    const [isSettingsLoading, setIsSettingsLoading] = useState(false);
+
     const [stats, setStats] = useState({
         totalProjects: 0,
         testedOrCompleted: 0,
@@ -78,10 +97,11 @@ export default function FacultyDashboard() {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const [projectsData, teamsData, reportsData] = await Promise.all([
+            const [projectsData, teamsData, reportsData, settingsData] = await Promise.all([
                 getAllProjectsForFacultyDashboard(),
                 getAllTeamsForFaculty(),
-                getReportsForFaculty()
+                getReportsForFaculty(),
+                getSubmissionSettings()
             ]);
 
             const fetchedProjects = (projectsData || []) as Project[];
@@ -90,6 +110,13 @@ export default function FacultyDashboard() {
             setProjects(fetchedProjects);
             setTeams(fetchedTeams);
             setInboxReports(reportsData as Report[]);
+
+            setSubmissionSettings(settingsData);
+            if (settingsData.deadline) {
+                setSelectedDeadline(settingsData.deadline.toDate());
+            } else {
+                setSelectedDeadline(null); // Explicitly set to null
+            }
 
             const testedOrCompletedCount = fetchedProjects.filter(
                 (p) => p.status === 'COMPLETED' 
@@ -135,6 +162,49 @@ export default function FacultyDashboard() {
     const filteredProjectsAssigned = useMemo(() => filterProjects(projectsAssigned, testingStatusSearchQuery), [projectsAssigned, testingStatusSearchQuery]);
     const filteredProjectsUnassigned = useMemo(() => filterProjects(projectsUnassigned, testingStatusSearchQuery), [projectsUnassigned, testingStatusSearchQuery]);
     const filteredProjectsReported = useMemo(() => filterProjects(projectsReported, testingStatusSearchQuery), [projectsReported, testingStatusSearchQuery]);
+
+    // Handlers for submission settings
+    const handleSetDeadline = async () => {
+        if (!selectedDeadline) return;
+        setIsSettingsLoading(true);
+        await setSubmissionDeadline(selectedDeadline);
+        await refetchSettings();
+        setIsSettingsLoading(false);
+    };
+
+    const handleClearDeadline = async () => {
+        setIsSettingsLoading(true);
+        await clearSubmissionDeadline();
+        await refetchSettings();
+        setIsSettingsLoading(false);
+    };
+    
+    const handleToggleSubmissions = async () => {
+        setIsSettingsLoading(true);
+        await toggleSubmissions(!submissionSettings.allowsSubmission);
+        await refetchSettings();
+        setIsSettingsLoading(false);
+    };
+
+    const refetchSettings = async () => {
+        const settingsData = await getSubmissionSettings();
+        setSubmissionSettings(settingsData);
+        // --- (MODIFY) ---
+        if (settingsData.deadline) {
+            setSelectedDeadline(settingsData.deadline.toDate());
+        } else {
+            setSelectedDeadline(null); // Explicitly set to null
+        }
+        // --- (END MODIFY) ---
+    };
+
+    const formattedDeadline = useMemo(() => {
+        if (!submissionSettings.deadline) return null;
+        return submissionSettings.deadline.toDate().toLocaleString('en-US', {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+        });
+    }, [submissionSettings.deadline]);
 
     if (loading) {
         return (
@@ -206,6 +276,78 @@ export default function FacultyDashboard() {
                             </div>
                             {/* --- (END RESTORED) --- */}
 
+                            {/* --- (ADD) NEW SUBMISSION SETTINGS CARD --- */}
+                            <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
+                                <div className="px-6 py-4 border-b-2 border-gray-300 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold text-gray-800">Project Submission Settings</h2>
+                                </div>
+                                <div className="p-6 space-y-6">
+                                    {/* Manual On/Off Toggle */}
+                                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border-2 border-gray-300">
+                                        <div>
+                                            <h3 className="font-semibold text-gray-800">Allow Submissions</h3>
+                                            <p className="text-sm text-gray-600">Manually open or close all project submissions.</p>
+                                        </div>
+                                        <button
+                                            onClick={handleToggleSubmissions}
+                                            disabled={isSettingsLoading}
+                                            className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-800 focus:ring-offset-2 ${
+                                                submissionSettings.allowsSubmission ? 'bg-red-800' : 'bg-gray-400'
+                                            } ${isSettingsLoading ? 'opacity-50' : ''}`}
+                                        >
+                                            <span
+                                                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                                submissionSettings.allowsSubmission ? 'translate-x-5' : 'translate-x-0'
+                                                }`}
+                                            />
+                                        </button>
+                                    </div>
+
+                                    {/* Deadline Setter */}
+                                    <div className="p-4 bg-gray-50 rounded-lg border-2 border-gray-300">
+                                        <h3 className="font-semibold text-gray-800 mb-2">Set Deadline</h3>
+                                        <p className="text-sm text-gray-600 mb-4">
+                                            Current Deadline: 
+                                            {formattedDeadline ? (
+                                                <strong className="text-red-800 ml-2">{formattedDeadline}</strong>
+                                            ) : (
+                                                <span className="text-gray-500 ml-2">None set</span>
+                                            )}
+                                        </p>
+                                        
+                                        <div className="flex flex-col sm:flex-row gap-4">
+                                            <div className="flex-grow">
+                                                <DatePicker
+                                                    selected={selectedDeadline}
+                                                    onChange={(date: Date | null) => setSelectedDeadline(date)}
+                                                    showTimeSelect
+                                                    dateFormat="MMMM d, yyyy h:mm aa"
+                                                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-red-600 text-gray-700"
+                                                />
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={handleSetDeadline}
+                                                    disabled={isSettingsLoading}
+                                                    className="px-4 py-2 bg-red-800 text-white rounded-lg font-medium hover:bg-red-900 disabled:bg-gray-400 flex-grow sm:flex-grow-0"
+                                                >
+                                                    <Calendar className="w-4 h-4 inline mr-2" />
+                                                    Set
+                                                </button>
+                                                <button
+                                                    onClick={handleClearDeadline}
+                                                    disabled={isSettingsLoading || !submissionSettings.deadline}
+                                                    className="px-4 py-2 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-medium hover:bg-gray-50 disabled:opacity-50 flex-grow sm:flex-grow-0"
+                                                >
+                                                    <XCircle className="w-4 h-4 inline mr-2" />
+                                                    Clear
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {/* --- (END ADD) --- */}
 
                             {/* Testing Status Section (Your new logic) */}
                             <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">

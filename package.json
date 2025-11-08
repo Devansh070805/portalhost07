@@ -19,6 +19,7 @@
     "next": "^15.5.5",
     "pdfkit": "^0.17.2",
     "react": "^19.1.0",
+    "react-datepicker": "^8.8.0",
     "react-dom": "^19.1.0",
     "resend": "^6.4.0",
     "zod": "^4.1.12"
@@ -30,6 +31,7 @@
     "@types/node": "^20.19.22",
     "@types/pdfkit": "^0.17.3",
     "@types/react": "^19.2.2",
+    "@types/react-datepicker": "^6.2.0",
     "@types/react-dom": "^19.2.2",
     "eslint": "^9.37.0",
     "eslint-config-next": "^15.5.5",
