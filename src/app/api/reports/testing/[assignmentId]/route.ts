@@ -802,9 +802,9 @@ async function generateTestReport(assignmentId: string) {
 // --- API Route Handler ---
 export const GET = async (
   req: NextRequest,
-  { params }: { params: { assignmentId: string } }
+  { params }: { params: Promise<{ assignmentId: string }> }
 ) => {
-  const { assignmentId }  = await params;
+  const assignmentId   = (await params).assignmentId;
 
   if (!assignmentId) {
     return NextResponse.json({ error: 'Assignment ID missing' }, { status: 400 });
