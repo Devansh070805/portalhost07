@@ -799,11 +799,12 @@ async function generateTestReport(assignmentId: string) {
 
 // --- API Route Handler ---
 // *** FIX 1: Changed signature to properly destructure 'params' ***
+// --- API Route Handler ---
 export const GET = async (
-  req: NextRequest, 
+  req: NextRequest,
   { params }: { params: { assignmentId: string } }
 ) => {
-  const assignmentId = params.assignmentId; // Direct access
+  const { assignmentId }  = await params;
 
   if (!assignmentId) {
     return NextResponse.json({ error: 'Assignment ID missing' }, { status: 400 });
@@ -813,7 +814,6 @@ export const GET = async (
     const { pdfBuffer, projectTitle } = await generateTestReport(assignmentId);
     const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
 
-    // Convert Buffer → Uint8Array for NextResponse
     const uint8 = new Uint8Array(pdfBuffer);
 
     return new NextResponse(uint8, {
@@ -825,6 +825,9 @@ export const GET = async (
     });
   } catch (err: any) {
     console.error('Report generation failed:', err);
-    return NextResponse.json({ error: 'Failed to generate report', details: err?.message }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to generate report', details: err?.message },
+      { status: 500 }
+    );
   }
 };
