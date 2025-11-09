@@ -5,7 +5,7 @@ import { doc, getDoc } from "firebase/firestore";
  * Safely fetches a single student's data from a reference.
  */
 async function getStudentById(studentRef) {
-  if (!studentRef) return { name: "N/A", email: "N/A" };
+  if (!studentRef) return { name: "N/A", email: "N/A", subgroup: "N/A" };
   try {
     const studentSnap = await getDoc(studentRef);
     if (studentSnap.exists()) {
@@ -14,12 +14,13 @@ async function getStudentById(studentRef) {
         id: studentSnap.id,
         name: data.name || "Unknown",
         email: data.email || "N/A",
+        subgroup: data.subgroup || "N/A", // Added missing subgroup field
       };
     }
   } catch (error) {
     console.error("Error fetching student:", error);
   }
-  return { name: "N/A", email: "N/A" };
+  return { name: "N/A", email: "N/A", subgroup: "N/A" };
 }
 
 /**
