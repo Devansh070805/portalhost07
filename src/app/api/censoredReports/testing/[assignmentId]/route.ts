@@ -1,3 +1,4 @@
+// /api/censoredReports/testing/[assignmentId]
 import { NextRequest, NextResponse } from 'next/server';
 // This function is
 // 1. Not provided, so I cannot edit it.
@@ -915,9 +916,9 @@ async function generateTestReport(assignmentId: string, censored: boolean) {
 // Also using standard Next.js 13+ App Router signature for params
 export const GET = async (
   req: NextRequest,
-  { params }: { params: { assignmentId: string } }
+  { params }: { params: Promise<{ assignmentId: string }> }
 ) => {
-  const assignmentId = params.assignmentId;
+  const assignmentId = (await params).assignmentId;
   
   // Check for the new query parameter
   const censored = req.nextUrl.searchParams.get('censored') === 'true';
