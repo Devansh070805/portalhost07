@@ -212,17 +212,24 @@ export default function TeamDetailPage() {
     }
 
     const handleDownloadReport = async (projectTitle: string) => {
-        const completedAssignment = project?.testAssignments?.find(a => a.status === 'COMPLETED');
-        const assignmentIdToDownload = completedAssignment?.id || project?.testAssignments?.[0]?.id;
+        // --- MODIFICATION START ---
+        // We use the project's ID, not a specific assignment ID.
+        const projectIdToDownload = project?.id;
 
-        if (!assignmentIdToDownload) {
-            alert("No assignment ID found for this project. Cannot download report.");
+        if (!projectIdToDownload) {
+            alert("No project ID found. Cannot download report.");
             return;
         }
+        // --- MODIFICATION END ---
 
         setDownloading(true);
         try {
-            const response = await fetch(`/api/reports/testing/${assignmentIdToDownload}`); 
+            // --- MODIFICATION START ---
+            // Point to the project-wide report API route.
+            // We add ?censored=false to ensure faculty get the full uncensored report.
+            const response = await fetch(`/api/reports/project/${projectIdToDownload}?censored=false`);
+            // --- MODIFICATION END ---
+            
             if (!response.ok) {
                 const err = await response.json();
                 throw new Error(err.error || "Failed to download PDF");
@@ -380,9 +387,9 @@ export default function TeamDetailPage() {
                                             </Link>
                                             <button
                                                 onClick={() => handleDownloadReport(project.title)}
-                                                disabled={downloading || project.status !== 'COMPLETED'}
-                                                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-green-300"
-                                                title={project.status !== 'COMPLETED' ? "Report available only when testing is completed" : "Download test report PDF"}
+                                                disabled={downloading}
+                                                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                title="Download full project report (in-progress or complete)"
                                             >
                                                 {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                                                 {downloading ? "Generating..." : "Download Report"}

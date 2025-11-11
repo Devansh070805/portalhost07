@@ -1,4 +1,3 @@
-// src/app/dashboard/page.tsx
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
@@ -7,7 +6,8 @@ import {
   ClipboardCheck, Layers, Trash2,
   Inbox as InboxIcon,
   AlertTriangle,
-  Calendar
+  Calendar,
+  Download // <-- 1. IMPORTED DOWNLOAD ICON
 } from 'lucide-react';
 import Header from '@/components/Header';
 import AuthCheck from '@/components/AuthCheck';
@@ -461,7 +461,7 @@ const getStatusText = (status: string) => {
             {/* --- End of Inbox Section --- */}
 
 
-            {/* Projects List (Unchanged) */}
+            {/* Projects List (MODIFIED) */}
             <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm mb-8">
               <div className="px-6 py-4 border-b-2 border-gray-300 flex items-center justify-between">
                 <h2 className="text-xl font-bold text-gray-800">My Projects</h2>
@@ -519,7 +519,7 @@ const getStatusText = (status: string) => {
                                 </span>
                               )}
                             </div>
-                            <div className="flex gap-3">
+                            <div className="flex flex-wrap gap-3">
                               {project.deployedLink && (
                                 <a
                                   href={project.deployedLink}
@@ -541,6 +541,18 @@ const getStatusText = (status: string) => {
                                   GitHub
                                 </a>
                               )}
+                              
+                              {/* --- MODIFICATION: Changed this from a download link to a page link --- */}
+<Link
+  href={`/reports/${project.id}`}
+  className="px-4 py-2 bg-red-800 hover:bg-red-800 text-white rounded-lg text-sm font-medium flex items-center gap-2"
+  title="View report options for this project"
+>
+  <FileText className="w-4 h-4" />
+  View Report
+</Link>
+{/* --- END OF MODIFICATION --- */}
+
                             </div>
                           </div>
                         </div>

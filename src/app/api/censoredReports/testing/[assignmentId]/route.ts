@@ -9,7 +9,6 @@ import path from 'path';
 import fs from 'fs';
 
 // --- Constants for Styling ---
-// *** FIX 2: Changed from 'const' to 'let' to allow custom fonts to override them ***
 let FONT_REGULAR = 'Times-Roman';
 let FONT_BOLD = 'Times-Bold';
 let FONT_ITALIC = 'Times-Italic';
@@ -93,7 +92,7 @@ interface TestCase {
   debuggingReport?: string;
   testStatus: 'pending' | 'pass' | 'fail';
   metadataImageUrl: string | null;
-  testedBy: string | null;
+  testedBy: string | null; // This is the 'id' or 'name' of a HydratedTeamMember
   creationTime: FirebaseTimestamp;
   resultSubmissionTime?: FirebaseTimestamp;
   severity?: 'low' | 'medium' | 'high';
@@ -108,8 +107,6 @@ interface HydratedAssignment {
 }
 
 // The new "master" data object
-// Assumes getFullReportData(assignmentId) finds the project
-// and returns all related data.
 interface ReportData {
   project: Project;
   originalTeam: HydratedTeam;
@@ -281,10 +278,22 @@ function drawProjectDetails(doc: PDFKit.PDFDocument, project: Project, y: number
 
 /**
  * Draws the table for Team Details.
+ * // --- MODIFICATION ---
+ * Added 'anonymizedName' parameter to hide testing team details.
  */
-function drawTeamDetails(doc: PDFKit.PDFDocument, team: HydratedTeam, title: string, y: number) {
+function drawTeamDetails(
+  doc: PDFKit.PDFDocument, 
+  team: HydratedTeam, 
+  title: string, 
+  y: number, 
+  anonymizedName?: string // If provided, we censor the output
+) {
   let tableY = drawSectionHeader(doc, title, y);
-  doc.fontSize(14).font(FONT_BOLD).fillColor(COLOR_TEXT).text(team.teamName, PAGE_MARGIN, tableY);
+  
+  // --- MODIFICATION ---
+  // Use the anonymized name if provided, otherwise use the real team name
+  const displayName = anonymizedName || team.teamName;
+  doc.fontSize(14).font(FONT_BOLD).fillColor(COLOR_TEXT).text(displayName, PAGE_MARGIN, tableY);
   doc.moveDown(0.5);
   tableY = doc.y;
   
@@ -303,29 +312,66 @@ function drawTeamDetails(doc: PDFKit.PDFDocument, team: HydratedTeam, title: str
 
   // Draw Rows
   doc.font(FONT_REGULAR).fontSize(9);
-  for (const member of team.members) {
-    const role = member.isLeader ? 'Team Leader' : 'Member';
-    const row = [member.name, role, member.email, member.subgroup];
-    const rowHeight = doc.heightOfString(member.email, { width: colWidths[2] - 10 }) + 10;
-    
-    tableY = checkPageBreak(doc, tableY, rowHeight);
-    let cellX = PAGE_MARGIN;
-    const rowColor = member.isLeader ? '#FEF3C7' : (tableY % 2 === 0 ? '#FFFFFF' : COLOR_BG_LIGHT); // Highlight leader
-    
-    row.forEach((cell, i) => {
-      doc.rect(cellX, tableY, colWidths[i], rowHeight).fillAndStroke(rowColor, COLOR_BORDER);
-      doc.fillColor(COLOR_TEXT).text(cell, cellX + 5, tableY + 5, { width: colWidths[i] - 10 });
-      cellX += colWidths[i];
-    });
-    tableY += rowHeight;
+  
+  // --- MODIFICATION ---
+  // Use a different loop for anonymized data
+  if (anonymizedName) {
+    // ANONYMIZED VERSION
+    for (const [i, member] of team.members.entries()) {
+      const role = member.isLeader ? 'Team Leader' : 'Member';
+      // Hide name, email, and subgroup
+      const name = member.isLeader ? 'Team Leader' : `Member ${i + 1}`;
+      const email = 'N/A (Censored)';
+      const subgroup = 'N/A';
+      
+      const row = [name, role, email, subgroup];
+      const rowHeight = 25; // Simpler row height as data is static
+      
+      tableY = checkPageBreak(doc, tableY, rowHeight);
+      let cellX = PAGE_MARGIN;
+      const rowColor = member.isLeader ? '#FEF3C7' : (i % 2 === 0 ? COLOR_BG_LIGHT : '#FFFFFF');
+      
+      row.forEach((cell, i) => {
+        doc.rect(cellX, tableY, colWidths[i], rowHeight).fillAndStroke(rowColor, COLOR_BORDER);
+        doc.fillColor(COLOR_TEXT).text(cell, cellX + 5, tableY + 5, { width: colWidths[i] - 10 });
+        cellX += colWidths[i];
+      });
+      tableY += rowHeight;
+    }
+  } else {
+    // ORIGINAL VERSION
+    for (const member of team.members) {
+      const role = member.isLeader ? 'Team Leader' : 'Member';
+      const row = [member.name, role, member.email, member.subgroup];
+      const rowHeight = doc.heightOfString(member.email, { width: colWidths[2] - 10 }) + 10;
+      
+      tableY = checkPageBreak(doc, tableY, rowHeight);
+      let cellX = PAGE_MARGIN;
+      const rowColor = member.isLeader ? '#FEF3C7' : (tableY % 2 === 0 ? '#FFFFFF' : COLOR_BG_LIGHT); // Highlight leader
+      
+      row.forEach((cell, i) => {
+        doc.rect(cellX, tableY, colWidths[i], rowHeight).fillAndStroke(rowColor, COLOR_BORDER);
+        doc.fillColor(COLOR_TEXT).text(cell, cellX + 5, tableY + 5, { width: colWidths[i] - 10 });
+        cellX += colWidths[i];
+      });
+      tableY += rowHeight;
+    }
   }
+  
   return tableY;
 }
 
 /**
  * Draws the table for Link Reports.
+ * // --- MODIFICATION ---
+ * Added 'teamNameMap' to anonymize the 'Reporting Team' column.
  */
-function drawLinkReports(doc: PDFKit.PDFDocument, reports: LinkReport[], y: number) {
+function drawLinkReports(
+  doc: PDFKit.PDFDocument, 
+  reports: LinkReport[], 
+  y: number,
+  teamNameMap?: Map<string, string> // Map of [real team name] -> [anonymized name]
+) {
   let tableY = drawSectionHeader(doc, 'Link Reports', y);
   
   if (!reports || reports.length === 0) {
@@ -351,7 +397,14 @@ function drawLinkReports(doc: PDFKit.PDFDocument, reports: LinkReport[], y: numb
   for (const report of reports) {
     // Format logs
     const logs = report.logs.map(log => `[${formatTimestamp(log.timestamp)}] ${log.action}: ${log.description}`).join('\n');
-    const row = [report.reportingTeamName, report.proposedNewLink, report.status, logs];
+    
+    // --- MODIFICATION ---
+    // Look up the anonymized team name if the map is provided
+    const reportingTeam = teamNameMap 
+      ? (teamNameMap.get(report.reportingTeamName) || 'Testing Team (Unknown)') 
+      : report.reportingTeamName;
+      
+    const row = [reportingTeam, report.proposedNewLink, report.status, logs];
     
     let maxHeight = 0;
     row.forEach((cell, i) => {
@@ -455,8 +508,7 @@ function drawDebuggingReportTable(doc: PDFKit.PDFDocument, reportString: string 
 }
 
 /**
- * Draws the Test Case Summary cards (image_cf1fda.png)
- * (Updated to center-align text and remove broken icons)
+ * Draws the Test Case Summary cards
  */
 function drawSummaryCards(doc: PDFKit.PDFDocument, pass: number, fail: number, pending: number, y: number) {
   let cardY = drawSectionHeader(doc, 'Test Case Summary (All Assignments)', y);
@@ -502,8 +554,15 @@ function drawSummaryCards(doc: PDFKit.PDFDocument, pass: number, fail: number, p
 
 /**
  * Draws a single, full-page Test Case report.
+ * // --- MODIFICATION ---
+ * Added 'memberNameMap' to anonymize the 'Tested By' field.
  */
-async function drawTestCasePage(doc: PDFKit.PDFDocument, tc: TestCase, index: number) {
+async function drawTestCasePage(
+  doc: PDFKit.PDFDocument, 
+  tc: TestCase, 
+  index: number,
+  memberNameMap?: Map<string, string> // Map of [real member id/name] -> [anonymized name]
+) {
   let y = PAGE_MARGIN;
   
   // 2. Status Badge (Calculate and Draw First)
@@ -533,10 +592,16 @@ async function drawTestCasePage(doc: PDFKit.PDFDocument, tc: TestCase, index: nu
   // Set Y to be *after* whichever is taller: the title or the badge
   y = Math.max(titleEndY, badgeY + 25) + 15; // +25 for badge height, +15 for margin
 
+  // --- MODIFICATION ---
+  // Look up the anonymized tester name if the map is provided
+  const testedBy = (memberNameMap && tc.testedBy)
+    ? (memberNameMap.get(tc.testedBy) || 'Tester')
+    : (tc.testedBy || 'N/A');
+
   // 3. Details Table (Designed By, Tested By, etc.)
   const details = {
-    'Designed By': tc.designedBy || 'N/A',
-    'Tested By': tc.testedBy || 'N/A',
+    'Designed By': tc.designedBy || 'N/A', // This is the project team, so it's OK to show
+    'Tested By': testedBy, // This is the ANONYMIZED tester
     'Severity': tc.severity?.toUpperCase() || 'N/A',
     'Created': formatTimestamp(tc.creationTime),
     'Submitted': formatTimestamp(tc.resultSubmissionTime),
@@ -647,7 +712,9 @@ function drawFooter(doc: PDFKit.PDFDocument, assignmentId: string) {
 }
 
 // --- Core Generation Function ---
-async function generateTestReport(assignmentId: string) {
+// --- MODIFICATION ---
+// Added 'censored' flag to trigger anonymization
+async function generateTestReport(assignmentId: string, censored: boolean) {
   // 1. Get ALL data. This function is assumed to be updated.
   const data = (await getFullReportData(assignmentId)) as ReportData | null;
   if (!data) throw new Error('Incomplete or missing report data');
@@ -681,7 +748,6 @@ async function generateTestReport(assignmentId: string) {
 
     let fontsLoaded = 0;
 
-    // *** FIX 3: Uncommented font registration block ***
     // Register Regular
     if (fs.existsSync(regularFile)) {
       doc.registerFont('CustomTimesRegular', regularFile); // Register with a new name
@@ -721,6 +787,32 @@ async function generateTestReport(assignmentId: string) {
     // Fallbacks are already set, so we are safe.
   }
 
+  // --- MODIFICATION ---
+  // Pre-processing step to build anonymization maps if 'censored' is true
+  const teamNameMap = new Map<string, string>();
+  const memberNameMap = new Map<string, string>(); // Maps [member.id] -> [anonymized name]
+
+  if (censored) {
+    data.assignments.forEach((assignment, teamIndex) => {
+      // 1. Map Real Team Name -> Anonymized Team Name
+      const anonymizedTeamName = `Testing Team ${teamIndex + 1}`;
+      teamNameMap.set(assignment.testingTeam.teamName, anonymizedTeamName);
+      
+      // 2. Map Real Member ID/Name -> Anonymized Member Name
+      assignment.testingTeam.members.forEach((member, memberIndex) => {
+        const anonymizedMemberName = member.isLeader 
+          ? `Team Leader (Team ${teamIndex + 1})`
+          : `Tester ${memberIndex + 1} (Team ${teamIndex + 1})`;
+          
+        // Map both ID and Name to be safe, as we don't know what tc.testedBy holds
+        memberNameMap.set(member.id, anonymizedMemberName);
+        memberNameMap.set(member.name, anonymizedMemberName);
+      });
+    });
+  }
+  // --- END MODIFICATION ---
+
+
   // --- Page 1: Title & Project Details ---
   let y = PAGE_MARGIN;
   doc
@@ -741,12 +833,15 @@ async function generateTestReport(assignmentId: string) {
   // --- Page 2: Team Details ---
   doc.addPage();
   y = PAGE_MARGIN;
+  // This is the project team, so we NEVER anonymize it.
   y = drawTeamDetails(doc, data.originalTeam, 'Project Submitting Team', y);
   
   // --- Page 3: Link Reports ---
   doc.addPage();
   y = PAGE_MARGIN;
-  y = drawLinkReports(doc, data.linkReports, y);
+  // --- MODIFICATION ---
+  // Pass the teamNameMap to anonymize the 'Reporting Team' column
+  y = drawLinkReports(doc, data.linkReports, y, censored ? teamNameMap : undefined);
   
   // --- Page 4: Test Case Summary & Assignments ---
   doc.addPage();
@@ -772,7 +867,13 @@ async function generateTestReport(assignmentId: string) {
     
     // Draw the assignment header
     y = drawSectionHeader(doc, 'Testing Assignment Details', y);
-    y = drawTeamDetails(doc, assignment.testingTeam, 'Testing Team:', y);
+    
+    // --- MODIFICATION ---
+    // Pass the anonymized name (looked up from the map) to drawTeamDetails
+    const anonymizedTeamName = censored ? teamNameMap.get(assignment.testingTeam.teamName) : undefined;
+    y = drawTeamDetails(doc, assignment.testingTeam, 'Testing Team:', y, anonymizedTeamName);
+    // --- END MODIFICATION ---
+
     doc.moveDown(2);
     y = doc.y;
     doc.fontSize(12).font(FONT_REGULAR).fillColor(COLOR_MUTED).text('The following pages detail each test case executed by this team.', PAGE_MARGIN, y);
@@ -786,8 +887,11 @@ async function generateTestReport(assignmentId: string) {
     for (const [i, tc] of assignment.testCases.entries()) {
       // Add a new page *for each test case*
       doc.addPage();
-      // drawTestCasePage now draws on the current page
-      await drawTestCasePage(doc, tc, i + 1);
+      
+      // --- MODIFICATION ---
+      // Pass the memberNameMap to anonymize the 'Tested By' field
+      await drawTestCasePage(doc, tc, i + 1, censored ? memberNameMap : undefined);
+      // --- END MODIFICATION ---
     }
   }
 
@@ -798,24 +902,33 @@ async function generateTestReport(assignmentId: string) {
   // End the document
   doc.end();
   const pdfBuffer = await streamPromise;
-  return { pdfBuffer, projectTitle: data.project.title || 'report' };
+  
+  // --- MODIFICATION ---
+  // Add a suffix to the filename if censored
+  const titleSuffix = censored ? '_censored' : '';
+  return { pdfBuffer, projectTitle: (data.project.title || 'report') + titleSuffix };
 }
 
 // --- API Route Handler ---
-// *** FIX 1: Changed signature to properly destructure 'params' ***
-// --- API Route Handler ---
+// --- MODIFICATION ---
+// Updated to check for 'censored' query param
+// Also using standard Next.js 13+ App Router signature for params
 export const GET = async (
   req: NextRequest,
-  { params }: { params: Promise<{ assignmentId: string }> }
+  { params }: { params: { assignmentId: string } }
 ) => {
-  const assignmentId   = (await params).assignmentId;
+  const assignmentId = params.assignmentId;
+  
+  // Check for the new query parameter
+  const censored = req.nextUrl.searchParams.get('censored') === 'true';
 
   if (!assignmentId) {
     return NextResponse.json({ error: 'Assignment ID missing' }, { status: 400 });
   }
 
   try {
-    const { pdfBuffer, projectTitle } = await generateTestReport(assignmentId);
+    // Pass the 'censored' flag to the generator
+    const { pdfBuffer, projectTitle } = await generateTestReport(assignmentId, censored);
     const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
 
     const uint8 = new Uint8Array(pdfBuffer);

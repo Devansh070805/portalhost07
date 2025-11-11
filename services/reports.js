@@ -42,7 +42,7 @@ async function getAllTestcasesForAssignment(assignmentId) {
  * Fetches all team data (team doc + member list).
  * (This function is good, no changes needed)
  */
-async function getTeamAndMembers(teamRef) {
+export async function getTeamAndMembers(teamRef) {
   if (!teamRef) return { teamName: "N/A", members: [] };
   
   try {
@@ -68,7 +68,7 @@ async function getTeamAndMembers(teamRef) {
  * Fetches all link reports for a given project.
  * Also resolves the reporting team's name.
  */
-async function getLinkReportsForProject(projectId) {
+export async function getLinkReportsForProject(projectId) {
   const reports = [];
   // Assumes projectId is a DocumentReference
   const q = query(collection(db, "linkReports"), where("projectId", "==", projectId));
@@ -104,7 +104,7 @@ async function getLinkReportsForProject(projectId) {
 /**
  * Fetches and hydrates all assignments for a given project.
  */
-async function getAllHydratedAssignments(projectId) {
+export async function getAllHydratedAssignments(projectId) {
   const hydratedAssignments = [];
   // 1. Find all assignments for this project
   // Assumes projectId is a DocumentReference
