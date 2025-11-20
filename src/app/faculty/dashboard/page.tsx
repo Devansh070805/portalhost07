@@ -1,512 +1,141 @@
-'use client';
-
-import { useEffect, useState, useMemo } from 'react';
-import {
-    Users,
-    FileText,
-    CheckCircle,
-    ChevronRight,
-    Search,
-    Inbox as InboxIcon,
-    XCircle,
-    Calendar
-} from 'lucide-react';
-import Header from '@/components/Header';
-import AuthCheck from '@/components/AuthCheck';
-import Link from 'next/link';
+// src/app/faculty/dashboard/page.tsx
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 
 import { getAllProjectsForFacultyDashboard } from '../../../../services/projects';
 import { getAllTeamsForFaculty } from '../../../../services/teams';
 import { getReportsForFaculty } from '../../../../services/inbox';
-import Inbox, { type Report } from '@/components/Inbox';
+import { getSubmissionSettings } from '../../../../services/settings';
 
-import DatePicker from 'react-datepicker';
-import { Timestamp } from 'firebase/firestore'; 
-import { 
-    getSubmissionSettings,
-    setSubmissionDeadline,
-    clearSubmissionDeadline,
-    toggleSubmissions
-} from '../../../../services/settings';
+import FacultyDashboardClient from './FacultyDashboardClient';
+import { useReducer } from 'react';
 
-console.log("FacultyDashboard component file is being read.");
-
-// --- INTERFACES ---
-interface Project {
-    id: string;
-    title: string;
-    description?: string;
-    status: 'ASSIGNED' | 'UNASSIGNED' | 'COMPLETED' | 'BLOCKED_LINK';
-    team: {
-        id: string | null;
-        name: string;
-        leader: { id?: string; name: string; email: string; }; // id is optional
-        subgroup: { name: string; };
-    };
-    deployedLink?: string;
-    githubLink?: string;
-}
-
-interface Team {
-    id: string;
+// ---- TYPES (mirror your client-side ones, but kept minimal here) ----
+interface SanitizedProject {
+  id: string;
+  title: string;
+  description?: string;
+  status: 'ASSIGNED' | 'UNASSIGNED' | 'COMPLETED' | 'BLOCKED_LINK';
+  team: {
+    id: string | null;
     name: string;
-    leader: { id: string; name: string; email: string; };
-    subgroup?: { name: string; };
-    members: any[];
+    leader: { id?: string; name: string; email: string };
+    subgroup: { name: string };
+  };
+  deployedLink?: string;
+  githubLink?: string;
 }
 
-// --- MAIN COMPONENT ---
-export default function FacultyDashboard() {
-    const [projects, setProjects] = useState<Project[]>([]);
-    const [teams, setTeams] = useState<Team[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [userName, setUserName] = useState('');
-    const [inboxReports, setInboxReports] = useState<Report[]>([]);
-    const [activeTab, setActiveTab] = useState<'overview' | 'inbox'>('overview');
-
-    // State for submission settings
-    const [submissionSettings, setSubmissionSettings] = useState<{
-        allowsSubmission: boolean;
-        deadline: Timestamp | null;
-    }>({ allowsSubmission: true, deadline: null });
-    const [selectedDeadline, setSelectedDeadline] = useState<Date | null>(new Date());
-    const [isSettingsLoading, setIsSettingsLoading] = useState(false);
-
-    const [stats, setStats] = useState({
-        totalProjects: 0,
-        testedOrCompleted: 0,
-        totalTeams: 0,
-    });
-
-    const [teamSearchQuery, setTeamSearchQuery] = useState('');
-    const [projectSearchQuery, setProjectSearchQuery] = useState('');
-    const [testingStatusSearchQuery, setTestingStatusSearchQuery] = useState('');
-
-    const [activeStatusTab, setActiveStatusTab] = useState<'COMPLETED' | 'ASSIGNED' | 'UNASSIGNED' | 'BLOCKED_LINK'>('COMPLETED');
-    const [projectsCompleted, setProjectsCompleted] = useState<Project[]>([]);
-    const [projectsAssigned, setProjectsAssigned] = useState<Project[]>([]);
-    const [projectsUnassigned, setProjectsUnassigned] = useState<Project[]>([]);
-    const [projectsReported, setProjectsReported] = useState<Project[]>([]);
-
-    useEffect(() => {
-        const name = localStorage.getItem('userName') || 'Faculty';
-        setUserName(name);
-        fetchData();
-    }, []);
-
-    const fetchData = async () => {
-        setLoading(true);
-        try {
-            const [projectsData, teamsData, reportsData, settingsData] = await Promise.all([
-                getAllProjectsForFacultyDashboard(),
-                getAllTeamsForFaculty(),
-                getReportsForFaculty(),
-                getSubmissionSettings()
-            ]);
-
-            const fetchedProjects = (projectsData || []) as Project[];
-            const fetchedTeams = (teamsData || []) as Team[];
-
-            setProjects(fetchedProjects);
-            setTeams(fetchedTeams);
-            setInboxReports(reportsData as Report[]);
-
-            setSubmissionSettings(settingsData);
-            if (settingsData.deadline) {
-                setSelectedDeadline(settingsData.deadline.toDate());
-            } else {
-                setSelectedDeadline(null); // Explicitly set to null
-            }
-
-            const testedOrCompletedCount = fetchedProjects.filter(
-                (p) => p.status === 'COMPLETED' 
-            ).length;
-
-            setStats({
-                totalProjects: fetchedProjects.length,
-                testedOrCompleted: testedOrCompletedCount,
-                totalTeams: fetchedTeams.length,
-            });
-
-            setProjectsCompleted(fetchedProjects.filter(p => p.status === 'COMPLETED'));
-            setProjectsAssigned(fetchedProjects.filter(p => p.status === 'ASSIGNED'));
-            setProjectsUnassigned(fetchedProjects.filter(p => p.status === 'UNASSIGNED'));
-            setProjectsReported(fetchedProjects.filter(p => p.status === 'BLOCKED_LINK'));
-        } catch (error) {
-            console.error('Error fetching data:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const filterProjects = (projectList: Project[], query: string) => {
-        if (!query) return projectList;
-        const lowerQuery = query.toLowerCase();
-        return projectList.filter(project =>
-            project.title.toLowerCase().includes(lowerQuery) ||
-            project.team.name.toLowerCase().includes(lowerQuery)
-        );
-    };
-
-    const filteredTeams = useMemo(() => {
-        if (!teamSearchQuery) return teams;
-        const query = teamSearchQuery.toLowerCase();
-        return teams.filter(team =>
-            team.name.toLowerCase().includes(query) ||
-            team.leader.name.toLowerCase().includes(query)
-        );
-    }, [teams, teamSearchQuery]);
-
-    const filteredAllProjects = useMemo(() => filterProjects(projects, projectSearchQuery), [projects, projectSearchQuery]);
-    const filteredProjectsCompleted = useMemo(() => filterProjects(projectsCompleted, testingStatusSearchQuery), [projectsCompleted, testingStatusSearchQuery]);
-    const filteredProjectsAssigned = useMemo(() => filterProjects(projectsAssigned, testingStatusSearchQuery), [projectsAssigned, testingStatusSearchQuery]);
-    const filteredProjectsUnassigned = useMemo(() => filterProjects(projectsUnassigned, testingStatusSearchQuery), [projectsUnassigned, testingStatusSearchQuery]);
-    const filteredProjectsReported = useMemo(() => filterProjects(projectsReported, testingStatusSearchQuery), [projectsReported, testingStatusSearchQuery]);
-
-    // Handlers for submission settings
-    const handleSetDeadline = async () => {
-        if (!selectedDeadline) return;
-        setIsSettingsLoading(true);
-        await setSubmissionDeadline(selectedDeadline);
-        await refetchSettings();
-        setIsSettingsLoading(false);
-    };
-
-    const handleClearDeadline = async () => {
-        setIsSettingsLoading(true);
-        await clearSubmissionDeadline();
-        await refetchSettings();
-        setIsSettingsLoading(false);
-    };
-    
-    const handleToggleSubmissions = async () => {
-        setIsSettingsLoading(true);
-        await toggleSubmissions(!submissionSettings.allowsSubmission);
-        await refetchSettings();
-        setIsSettingsLoading(false);
-    };
-
-    const refetchSettings = async () => {
-        const settingsData = await getSubmissionSettings();
-        setSubmissionSettings(settingsData);
-        // --- (MODIFY) ---
-        if (settingsData.deadline) {
-            setSelectedDeadline(settingsData.deadline.toDate());
-        } else {
-            setSelectedDeadline(null); // Explicitly set to null
-        }
-        // --- (END MODIFY) ---
-    };
-
-    const formattedDeadline = useMemo(() => {
-        if (!submissionSettings.deadline) return null;
-        return submissionSettings.deadline.toDate().toLocaleString('en-US', {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-        });
-    }, [submissionSettings.deadline]);
-
-    if (loading) {
-        return (
-            <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-800 mx-auto"></div>
-                    <p className="mt-4 text-gray-600">Loading Dashboard...</p>
-                </div>
-            </div>
-        );
-    }
-
-    return (
-        <AuthCheck requiredRole="faculty">
-            <div className="min-h-screen bg-gray-100 pb-20">
-                <Header title="Faculty Dashboard" userRole={userName} />
-
-                <div className="max-w-7xl mx-auto px-6 py-8 flex justify-between items-center mb-6">
-                    <div className="flex gap-4">
-                        <button
-                            onClick={() => setActiveTab('overview')}
-                            className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'overview' ? 'bg-red-800 text-white' : 'bg-white text-gray-700 border-2 border-gray-300 hover:bg-gray-50'}`}
-                        >
-                            Overview
-                        </button>
-                        <Link href="/faculty/assignments" className="px-4 py-2 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-medium hover:bg-gray-50">
-                            Assignments
-                        </Link>
-                        <Link href="/faculty/subgroups" className="px-4 py-2 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-medium hover:bg-gray-50">
-                            Subgroups
-                        </Link>
-                    </div>
-
-                    {/* Inbox icon on the right */}
-                    <button
-                        onClick={() => setActiveTab('inbox')}
-                        className={`relative p-3 rounded-full border-2 border-gray-300 hover:bg-gray-50 ${activeTab === 'inbox' ? 'bg-red-800 text-white' : 'bg-white text-gray-700'}`}
-                    >
-                        <InboxIcon className="w-5 h-5" />
-                        {inboxReports.length > 0 && (
-                            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
-                                {inboxReports.length}
-                            </span>
-                        )}
-                    </button>
-                </div>
-
-                <div className="max-w-7xl mx-auto px-6">
-                    {activeTab === 'overview' && (
-                        <div className="space-y-8">
-                            
-                            {/* --- (RESTORED) STATS CARDS --- */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
-                                    <FileText className="w-8 h-8 text-red-800 mb-3" />
-                                    <h3 className="text-2xl font-bold text-gray-800">{stats.totalProjects}</h3>
-                                    <p className="text-gray-600">Total Projects Submitted</p>
-                                </div>
-                                <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
-                                    <CheckCircle className="w-8 h-8 text-green-600 mb-3" />
-                                    <h3 className="text-2xl font-bold text-green-600">{stats.testedOrCompleted}</h3>
-                                    <p className="text-gray-600">Projects Tested/Completed</p>
-                                </div>
-                                <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
-                                    <Users className="w-8 h-8 text-red-800 mb-3" />
-                                    <h3 className="text-2xl font-bold text-gray-800">{stats.totalTeams}</h3>
-                                    <p className="text-gray-600">Total Teams Registered</p>
-                                </div>
-                            </div>
-                            {/* --- (END RESTORED) --- */}
-
-                            {/* --- (ADD) NEW SUBMISSION SETTINGS CARD --- */}
-                            <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
-                                <div className="px-6 py-4 border-b-2 border-gray-300 flex justify-between items-center">
-                                    <h2 className="text-xl font-bold text-gray-800">Project Submission Settings</h2>
-                                </div>
-                                <div className="p-6 space-y-6">
-                                    {/* Manual On/Off Toggle */}
-                                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border-2 border-gray-300">
-                                        <div>
-                                            <h3 className="font-semibold text-gray-800">Allow Submissions</h3>
-                                            <p className="text-sm text-gray-600">Manually open or close all project submissions.</p>
-                                        </div>
-                                        <button
-                                            onClick={handleToggleSubmissions}
-                                            disabled={isSettingsLoading}
-                                            className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-800 focus:ring-offset-2 ${
-                                                submissionSettings.allowsSubmission ? 'bg-red-800' : 'bg-gray-400'
-                                            } ${isSettingsLoading ? 'opacity-50' : ''}`}
-                                        >
-                                            <span
-                                                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                                submissionSettings.allowsSubmission ? 'translate-x-5' : 'translate-x-0'
-                                                }`}
-                                            />
-                                        </button>
-                                    </div>
-
-                                    {/* Deadline Setter */}
-                                    <div className="p-4 bg-gray-50 rounded-lg border-2 border-gray-300">
-                                        <h3 className="font-semibold text-gray-800 mb-2">Set Deadline</h3>
-                                        <p className="text-sm text-gray-600 mb-4">
-                                            Current Deadline: 
-                                            {formattedDeadline ? (
-                                                <strong className="text-red-800 ml-2">{formattedDeadline}</strong>
-                                            ) : (
-                                                <span className="text-gray-500 ml-2">None set</span>
-                                            )}
-                                        </p>
-                                        
-                                        <div className="flex flex-col sm:flex-row gap-4">
-                                            <div className="flex-grow">
-                                                <DatePicker
-                                                    selected={selectedDeadline}
-                                                    onChange={(date: Date | null) => setSelectedDeadline(date)}
-                                                    showTimeSelect
-                                                    dateFormat="MMMM d, yyyy h:mm aa"
-                                                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-red-600 text-gray-700"
-                                                />
-                                            </div>
-                                            <div className="flex gap-2">
-                                                <button
-                                                    onClick={handleSetDeadline}
-                                                    disabled={isSettingsLoading}
-                                                    className="px-4 py-2 bg-red-800 text-white rounded-lg font-medium hover:bg-red-900 disabled:bg-gray-400 flex-grow sm:flex-grow-0"
-                                                >
-                                                    <Calendar className="w-4 h-4 inline mr-2" />
-                                                    Set
-                                                </button>
-                                                <button
-                                                    onClick={handleClearDeadline}
-                                                    disabled={isSettingsLoading || !submissionSettings.deadline}
-                                                    className="px-4 py-2 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-medium hover:bg-gray-50 disabled:opacity-50 flex-grow sm:flex-grow-0"
-                                                >
-                                                    <XCircle className="w-4 h-4 inline mr-2" />
-                                                    Clear
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            {/* --- (END ADD) --- */}
-
-                            {/* Testing Status Section (Your new logic) */}
-                            <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
-                                <div className="px-6 py-4 border-b-2 border-gray-300">
-                                    <h2 className="text-xl font-bold text-gray-800">Testing Status</h2>
-                                </div>
-
-                                <div className="p-4 border-b-2 border-gray-300">
-                                    <div className="relative">
-                                        <input
-                                            type="text"
-                                            placeholder="Search projects in active tab"
-                                            value={testingStatusSearchQuery}
-                                            onChange={(e) => setTestingStatusSearchQuery(e.target.value)}
-                                            className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-red-600 text-gray-700"
-                                        />
-                                        <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                                    </div>
-                                </div>
-
-                                <div className="flex border-b border-gray-300 flex-wrap">
-                                    <StatusTab label="Testing Completed" value="COMPLETED" count={filteredProjectsCompleted.length} activeTab={activeStatusTab} setActiveTab={setActiveStatusTab} />
-                                    <StatusTab label="Assigned" value="ASSIGNED" count={filteredProjectsAssigned.length} activeTab={activeStatusTab} setActiveTab={setActiveStatusTab} />
-                                    <StatusTab label="Not Yet Assigned" value="UNASSIGNED" count={filteredProjectsUnassigned.length} activeTab={activeStatusTab} setActiveTab={setActiveStatusTab} />
-                                    <StatusTab label="Reported Projects" value="BLOCKED_LINK" count={filteredProjectsReported.length} activeTab={activeStatusTab} setActiveTab={setActiveStatusTab} />
-                                </div>
-
-                                <div className="max-h-[400px] overflow-y-auto">
-                                    {activeStatusTab === 'COMPLETED' && <ProjectList projects={filteredProjectsCompleted} />}
-                                    {activeStatusTab === 'ASSIGNED' && <ProjectList projects={filteredProjectsAssigned} />}
-                                    {activeStatusTab === 'UNASSIGNED' && <ProjectList projects={filteredProjectsUnassigned} />}
-                                    {activeStatusTab === 'BLOCKED_LINK' && <ProjectList projects={filteredProjectsReported} />}
-                                </div>
-                            </div>
-
-                            {/* --- (RESTORED) ALL TEAMS AND ALL PROJECTS --- */}
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                {/* All Teams Section */}
-                                <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm overflow-hidden">
-                                    <div className="px-6 py-4 border-b-2 border-gray-300">
-                                        <h2 className="text-xl font-bold text-gray-800">All Teams ({filteredTeams.length})</h2>
-                                    </div>
-                                    <div className="p-4 border-b-2 border-gray-300">
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                placeholder="Search teams by name or leader"
-                                                value={teamSearchQuery}
-                                                onChange={(e) => setTeamSearchQuery(e.target.value)}
-                                                className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-red-600 text-gray-700"
-                                            />
-                                            <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                                        </div>
-                                    </div>
-                                    <div className="max-h-[600px] overflow-y-auto">
-                                        {filteredTeams.length === 0 ? (
-                                            <p className="p-6 text-gray-500">{teamSearchQuery ? "No teams match your search." : "No teams registered yet."}</p>
-                                        ) : (
-                                            <ul className="divide-y divide-gray-300">
-                                                {filteredTeams.map((team) => (
-                                                    <li key={team.id} className="px-6 py-4 hover:bg-gray-50 flex justify-between items-center">
-                                                        <div>
-                                                            <p className="font-semibold text-gray-800">{team.name}</p>
-                                                            <p className="text-sm text-gray-600">Leader: {team.leader.name} {team.subgroup?.name ? `(${team.subgroup.name})` : ''}</p>
-                                                        </div>
-                                                        <Link href={`/faculty/team/${team.id}`} className="text-red-800 hover:text-red-900">
-                                                            <ChevronRight className="w-5 h-5" />
-                                                        </Link>
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* All Projects Section */}
-                                <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm overflow-hidden">
-                                    <div className="px-6 py-4 border-b-2 border-gray-300">
-                                        <h2 className="text-xl font-bold text-gray-800">All Projects ({filteredAllProjects.length})</h2>
-                                    </div>
-                                    <div className="p-4 border-b-2 border-gray-300">
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                placeholder="Search projects by title or team"
-                                                value={projectSearchQuery}
-                                                onChange={(e) => setProjectSearchQuery(e.target.value)}
-                                                className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-red-600 text-gray-700"
-                                            />
-                                            <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                                        </div>
-                                    </div>
-                                    <div className="max-h-[600px] overflow-y-auto">
-                                        {filteredAllProjects.length === 0 ? (
-                                            <p className="p-6 text-gray-500">{projectSearchQuery ? "No projects match your search." : "No projects submitted yet."}</p>
-                                        ) : (
-                                            <ul className="divide-y divide-gray-300">
-                                                {filteredAllProjects.map((project) => (
-                                                    <li key={project.id} className="px-6 py-4 hover:bg-gray-50 flex justify-between items-center">
-                                                        <div>
-                                                            <p className="font-semibold text-gray-800">{project.title}</p>
-                                                            <p className="text-sm text-gray-600">Team: {project.team.name} ({project.status})</p>
-                                                        </div>
-                                                        <Link href={`/faculty/team/${project.team.id}`} className="text-red-800 hover:text-red-900">
-                                                            <ChevronRight className="w-5 h-5" />
-                                                        </Link>
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                            {/* --- (END RESTORED) --- */}
-
-                        </div>
-                    )}
-
-                    {activeTab === 'inbox' && (
-                        <div className="bg-white border-2 border-gray-300 rounded-xl shadow-sm">
-                            <div className="px-6 py-4 border-b-2 border-gray-300">
-                                <h2 className="text-xl font-bold text-gray-800">Inbox: Project Link Reports</h2>
-                            </div>
-                            <Inbox role="faculty" reports={inboxReports} onDataMutate={fetchData} />
-                        </div>
-                    )}
-                </div>
-            </div>
-        </AuthCheck>
-    );
+interface SanitizedTeam {
+  id: string;
+  name: string;
+  leader: { id: string; name: string; email: string };
+  subgroup?: { name: string };
+  members: any[];
 }
 
-// --- SUB COMPONENTS ---
-function ProjectList({ projects }: { projects: Project[] }) {
-    if (projects.length === 0) return <p className="p-6 text-gray-500 text-center">No projects in this category.</p>;
-    return (
-        <ul className="divide-y divide-gray-300">
-            {projects.map(project => (
-                <li key={project.id} className="px-6 py-4 hover:bg-gray-50 flex justify-between items-center">
-                    <div>
-                        <p className="font-semibold text-gray-800">{project.title}</p>
-                        <p className="text-sm text-gray-600">Team: {project.team.name}</p>
-                    </div>
-                    <Link href={`/faculty/team/${project.team.id}`} className="text-red-800 hover:text-red-900">
-                        View Details <ChevronRight className="w-5 h-5 inline" />
-                    </Link>
-                </li>
-            ))}
-        </ul>
-    );
+interface SanitizedSubmissionSettings {
+  allowsSubmission: boolean;
+  // number = timestamp ms since epoch; null = no deadline
+  deadline: number | null;
 }
 
-function StatusTab({ label, value, count, activeTab, setActiveTab }: any) {
+// Very loose type for reports to avoid fighting TS here
+type SanitizedReport = any;
+
+// ---- HELPERS ----
+
+async function getFacultyContext() {
+  const cookieStore = await cookies();
+  const userEmail = cookieStore.get('userEmail')?.value || '';
+  const userName = cookieStore.get('userName')?.value || 'Faculty';
+  const userType = cookieStore.get('userType')?.value || '';
+
+  return { userEmail, userName, userType };
+}
+
+// ---- UTIL: FULL SAFE SERIALIZER ----
+const safeJson = (data: any) =>
+  JSON.parse(
+    JSON.stringify(data, (key, value) => {
+      if (value?.toDate) return value.toDate().toISOString(); // Timestamp → ISO
+      if (value?.id && value?.path) return value.id;           // DocRef → id
+      return value;
+    })
+  );
+
+// ---- SANITIZERS ----
+const sanitizeProject = (p: any) => safeJson({
+  id: p.id,
+  title: p.title,
+  description: p.description,
+  status: p.status,
+  team: p.team,
+  deployedLink: p.deployedLink,
+  githubLink: p.githubLink,
+});
+
+const sanitizeTeam = (t: any) => safeJson({
+  id: t.id,
+  name: t.name,
+  leader: t.leader,
+  subgroup: t.subgroup,
+  members: t.members,
+});
+
+const sanitizeReport = (r: any) => safeJson(r);
+
+const sanitizeSubmissionSettings = (s: any) => {
+  const deadline = s?.deadline?.toDate?.() ? s.deadline.toDate().getTime() : null;
+  return safeJson({
+    allowsSubmission: s?.allowsSubmission ?? true,
+    deadline,
+  });
+};
+
+
+// ---- PAGE ----
+
+export default async function FacultyDashboardPage() {
+  const { userEmail, userName, userType } = await getFacultyContext();
+
+  // Basic guard: if not faculty / no email, you can redirect to login
+  if (!userEmail || userType !== 'faculty') {
+    // You can also show an error card instead of redirect if you prefer
     return (
-        <button
-            onClick={() => setActiveTab(value)}
-            className={`flex-1 p-4 font-semibold min-w-[150px] ${activeTab === value ? 'text-red-800 border-b-4 border-red-800' : 'text-gray-600 hover:bg-gray-50'}`}
-        >
-            {label} ({count})
-        </button>
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="bg-white border-2 border-red-300 rounded-xl px-8 py-6 shadow">
+          <h1 className="text-xl font-bold text-red-800 mb-2">
+            Faculty session not found
+          </h1>
+          <p className="text-gray-700">Please log in again as faculty.</p>
+        </div>
+      </div>
     );
+  }
+
+  // Fetch everything on the server in parallel
+  const [rawProjects, rawTeams, rawReports, rawSettings] = await Promise.all([
+    getAllProjectsForFacultyDashboard(userEmail),
+    getAllTeamsForFaculty(userEmail),
+    getReportsForFaculty(userEmail),
+    getSubmissionSettings(userEmail)
+  ]);
+
+  const projects: SanitizedProject[] = (rawProjects || []).map(sanitizeProject);
+  const teams: SanitizedTeam[] = (rawTeams || []).map(sanitizeTeam);
+  const reports: SanitizedReport[] = (rawReports || []).map(sanitizeReport);
+  const submissionSettings: SanitizedSubmissionSettings =
+    sanitizeSubmissionSettings(rawSettings || {});
+
+  return (
+    <FacultyDashboardClient
+      initialProjects={projects}
+      initialTeams={teams}
+      initialInboxReports={reports}
+      initialSubmissionSettings={submissionSettings}
+      initialUserName={userName}
+      userEmail={userEmail}
+    />
+  );
 }

@@ -12,16 +12,17 @@ import {
     serverTimestamp,
     arrayUnion,
     runTransaction,
-    writeBatch // <-- NEW: Import writeBatch
+    writeBatch
 } from "firebase/firestore";
+
+// NEW: import team helper so we know which teams a faculty owns
+import { getAllTeamsForFaculty } from './teams.js';
 
 // --- Helper Function to Populate Report Details ---
 // This fetches the nested data for a single report
 async function populateReportDetails(reportDoc) {
     const reportData = reportDoc.data();
 
-    // Fetch details
-    // Use .path to handle potential null references gracefully
     const projectSnap = reportData.projectId ? await getDoc(reportData.projectId) : null;
     const uploadingTeamSnap = reportData.uploadingTeamId ? await getDoc(reportData.uploadingTeamId) : null;
     const reportingTeamSnap = reportData.reportingTeamId ? await getDoc(reportData.reportingTeamId) : null;
@@ -29,27 +30,73 @@ async function populateReportDetails(reportDoc) {
     return {
         id: reportDoc.id,
         ...reportData,
-        project: projectSnap?.exists() ? { id: projectSnap.id, ...projectSnap.data() } : { title: "Unknown Project" },
-        uploadingTeam: uploadingTeamSnap?.exists() ? { id: uploadingTeamSnap.id, ...uploadingTeamSnap.data() } : { teamName: "Unknown Team" },
-        reportingTeam: reportingTeamSnap?.exists() ? { id: reportingTeamSnap.id, ...reportingTeamSnap.data() } : { teamName: "Unknown Team" },
+        project: projectSnap?.exists()
+            ? { id: projectSnap.id, ...projectSnap.data() }
+            : { title: "Unknown Project" },
+        uploadingTeam: uploadingTeamSnap?.exists()
+            ? { id: uploadingTeamSnap.id, ...uploadingTeamSnap.data() }
+            : { teamName: "Unknown Team" },
+        reportingTeam: reportingTeamSnap?.exists()
+            ? { id: reportingTeamSnap.id, ...reportingTeamSnap.data() }
+            : { teamName: "Unknown Team" }
     };
 }
 
 // --- 1. For Faculty Dashboard ---
-export async function getReportsForFaculty() {
+// NOW faculty-scoped: only reports for projects whose UPLOADING TEAM
+// belongs to the faculty's subgroups.
+export async function getReportsForFaculty(facultyEmail) {
     const reports = [];
+
     try {
-        // Faculty should see all reports that are not closed
-        const q = query(collection(db, "linkReports"), where("status", "!=", "CLOSED"));
+        // If no faculty email, keep old behaviour (global view of all non-closed)
+        let allowedTeamIds = null;
+
+        if (facultyEmail) {
+            const teams = await getAllTeamsForFaculty(facultyEmail);
+            allowedTeamIds = new Set(
+                (teams || [])
+                    .filter((t) => t && t.id)
+                    .map((t) => t.id)
+            );
+
+            // If faculty has no teams, they shouldn't see anything
+            if (!allowedTeamIds.size) {
+                console.warn(
+                    `getReportsForFaculty: faculty ${facultyEmail} has no allowed teams – returning empty list.`
+                );
+                return [];
+            }
+        }
+
+        // Fetch all non-closed reports
+        const q = query(
+            collection(db, "linkReports"),
+            where("status", "!=", "CLOSED")
+        );
         const querySnapshot = await getDocs(q);
 
-        for (const doc of querySnapshot.docs) {
-            const report = await populateReportDetails(doc);
+        for (const reportDoc of querySnapshot.docs) {
+            const data = reportDoc.data();
+
+            // If we have a faculty scope, filter on uploadingTeamId
+            if (allowedTeamIds) {
+                const uploadingTeamRef = data.uploadingTeamId;
+                const uploadingTeamId = uploadingTeamRef && uploadingTeamRef.id;
+
+                if (!uploadingTeamId || !allowedTeamIds.has(uploadingTeamId)) {
+                    // This report is for a team outside this faculty's subgroups
+                    continue;
+                }
+            }
+
+            const report = await populateReportDetails(reportDoc);
             reports.push(report);
         }
+
         // Sort to show active ones first
         return reports.sort((a, b) => {
-            const order = { "PENDING_APPROVAL": 1, "OPEN": 2, "DECLINED": 3 };
+            const order = { PENDING_APPROVAL: 1, OPEN: 2, DECLINED: 3 };
             return (order[a.status] || 99) - (order[b.status] || 99);
         });
     } catch (error) {
@@ -67,13 +114,13 @@ export async function getReportsForUploadingTeam(teamId) {
         const q = query(collection(db, "linkReports"), where("uploadingTeamId", "==", teamRef));
         const querySnapshot = await getDocs(q);
 
-        for (const doc of querySnapshot.docs) {
-            const report = await populateReportDetails(doc);
+        for (const reportDoc of querySnapshot.docs) {
+            const report = await populateReportDetails(reportDoc);
             // Anonymize reporting team
             report.reportingTeam = { teamName: "A Testing Team" };
             reports.push(report);
         }
-        return reports.sort((a, b) => (a.status === 'CLOSED' ? 1 : -1)); // Show active first
+        return reports.sort((a, b) => (a.status === "CLOSED" ? 1 : -1)); // Show active first
     } catch (error) {
         console.error("Error fetching reports for uploading team: ", error);
         return [];
@@ -89,22 +136,21 @@ export async function getReportsForTestingTeam(teamId) {
         const q = query(collection(db, "linkReports"), where("reportingTeamId", "==", teamRef));
         const querySnapshot = await getDocs(q);
 
-        for (const doc of querySnapshot.docs) {
-            const report = await populateReportDetails(doc);
+        for (const reportDoc of querySnapshot.docs) {
+            const report = await populateReportDetails(reportDoc);
             // Anonymize uploading team
             report.uploadingTeam = { teamName: "The Project Team" };
             reports.push(report);
         }
-        return reports.sort((a, b) => (a.status === 'CLOSED' ? 1 : -1)); // Show active first
+        return reports.sort((a, b) => (a.status === "CLOSED" ? 1 : -1)); // Show active first
     } catch (error) {
         console.error("Error fetching reports for testing team: ", error);
         return [];
     }
 }
 
-
 // --- 4. Action: Uploader Submits New Link ---
-export async function submitNewLink(reportId, newLink, description) { // Added description
+export async function submitNewLink(reportId, newLink, description) {
     try {
         const reportRef = doc(db, "linkReports", reportId);
         await updateDoc(reportRef, {
@@ -113,7 +159,7 @@ export async function submitNewLink(reportId, newLink, description) { // Added d
             logs: arrayUnion({
                 timestamp: serverTimestamp(),
                 action: "New Link Submitted by Team",
-                description: description || newLink, // Use description if provided, else link
+                description: description || newLink
             })
         });
         return true;
@@ -134,46 +180,44 @@ export async function approveNewLink(reportId) {
         }
 
         const { projectId, proposedNewUrl } = reportSnap.data();
-        
+
         if (!projectId || !proposedNewUrl) {
-            throw new Error("Report is missing critical data (projectId or proposedNewUrl)");
+            throw new Error(
+                "Report is missing critical data (projectId or proposedNewUrl)"
+            );
         }
 
-        // 1. Find all assignments for this project that are locked
         const assignmentsQuery = query(
             collection(db, "assignments"),
             where("projectId", "==", projectId),
             where("status", "==", "LINK_REPORTED")
         );
-        
+
         const assignmentsToUnlockSnap = await getDocs(assignmentsQuery);
 
-        // 2. Use a BATCH WRITE to update everything atomically
         const batch = writeBatch(db);
 
-        // 2a. Update the Project's deployedLink
         batch.update(projectId, {
             deployedLink: proposedNewUrl
         });
 
-        // 2b. Close the report
         batch.update(reportRef, {
             status: "CLOSED",
             logs: arrayUnion({
                 timestamp: serverTimestamp(),
-                action: "Approved & Closed by Faculty",
+                action: "Approved & Closed by Faculty"
             })
         });
 
-        // 2c. Unlock all found assignments
-        assignmentsToUnlockSnap.forEach((doc) => {
-            batch.update(doc.ref, { status: "ASSIGNED" }); // Set back to active
+        assignmentsToUnlockSnap.forEach((docSnap) => {
+            batch.update(docSnap.ref, { status: "ASSIGNED" });
         });
-        
-        // 3. Commit the batch
+
         await batch.commit();
-        
-        console.log(`Transaction successful: Report closed, project updated, and ${assignmentsToUnlockSnap.size} assignments unlocked.`);
+
+        console.log(
+            `Transaction successful: Report closed, project updated, and ${assignmentsToUnlockSnap.size} assignments unlocked.`
+        );
         return true;
     } catch (error) {
         console.error("Error approving new link (batch write failed): ", error);
@@ -186,12 +230,12 @@ export async function declineNewLink(reportId, reason) {
     try {
         const reportRef = doc(db, "linkReports", reportId);
         await updateDoc(reportRef, {
-            status: "DECLINED", // Uploading team inbox will check for this
-            proposedNewUrl: null, // Clear the proposed URL
+            status: "DECLINED",
+            proposedNewUrl: null,
             logs: arrayUnion({
                 timestamp: serverTimestamp(),
                 action: "Declined by Faculty",
-                description: reason,
+                description: reason
             })
         });
         return true;

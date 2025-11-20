@@ -7,7 +7,8 @@ import {
   serverTimestamp, 
   getDoc, 
   getDocs, 
-  query 
+  query,
+  where 
 } from "firebase/firestore"; 
 
 /**
@@ -218,43 +219,100 @@ export async function getTeamMembersDetails(memberRefs) {
   }
 }
 
-/**
- * Fetches all teams and populates their leader's data.
- * Designed for the faculty dashboard.
- */
-export async function getAllTeamsForFaculty() {
+export async function getAllTeamsForFaculty(facultyEmail) {
+  //console.time("getAllTeamsForFaculty");
   const teams = [];
+
+  if (!facultyEmail) {
+    console.error("getAllTeamsForFaculty: facultyEmail is required");
+    return teams;
+  }
+
   try {
-    const teamsQuery = query(collection(db, "teams"));
-    const teamSnapshots = await getDocs(teamsQuery);
+    // 1) Fetch faculty doc
+    const facultyQ = query(
+      collection(db, "faculty"),
+      where("email", "==", facultyEmail)
+    );
+    const facultySnap = await getDocs(facultyQ);
 
-    for (const teamDoc of teamSnapshots.docs) {
+    if (facultySnap.empty) {
+      console.warn(`getAllTeamsForFaculty: no faculty found for ${facultyEmail}`);
+      return teams;
+    }
+
+    const facultyData = facultySnap.docs[0].data() || {};
+    const subgroupsUndertaking = Array.isArray(facultyData.subgroupsUndertaking)
+      ? facultyData.subgroupsUndertaking
+      : [];
+
+    if (subgroupsUndertaking.length === 0) {
+      return teams;
+    }
+
+    // 2) Get all teams at once
+    const teamSnap = await getDocs(query(collection(db, "teams")));
+
+    // Collect all leader refs
+    const leaderRefs = new Map();
+    const teamsWithRef = [];
+
+    teamSnap.docs.forEach((teamDoc) => {
       const teamData = teamDoc.data();
-      let leaderData = { name: "N/A", email: "N/A" };
-      let leaderSubgroup = "N/A";
+      let leaderRef = null;
 
-      // Fetch the leader's student document
       if (teamData.teamLeader) {
-        try {
-          // teamData.teamLeader might be a string path or DocumentReference
-          const leaderRef = ensureDocRef(teamData.teamLeader) || teamData.teamLeader;
-          const leaderDoc = await getDoc(leaderRef);
-          if (leaderDoc.exists()) {
-            const studentData = leaderDoc.data();
-            leaderData = {
-              name: studentData?.name || "N/A",
-              email: studentData?.email || "N/A",
-            };
-            leaderSubgroup = studentData?.subgroup || "N/A";
-          }
-        } catch (e) {
-          console.warn('getAllTeamsForFaculty: could not fetch leader info', e);
+        leaderRef = ensureDocRef(teamData.teamLeader) || teamData.teamLeader;
+        if (leaderRef && leaderRef.path) {
+          leaderRefs.set(leaderRef.path, leaderRef);
         }
       }
 
-      // Normalize members to array for frontend usage
-      let members = teamData.teamMembers ?? [];
-      if (!Array.isArray(members) && typeof members === 'object' && members !== null) {
+      teamsWithRef.push({
+        teamDoc,
+        teamData,
+        leaderRef,
+      });
+    });
+
+    // 3) Parallel fetch all leader docs
+    const uniqueLeaderRefs = Array.from(leaderRefs.values());
+    const leaderDocs = await Promise.all(uniqueLeaderRefs.map((ref) => getDoc(ref)));
+
+    const leaderDataByPath = new Map();
+    uniqueLeaderRefs.forEach((ref, i) => {
+      const snap = leaderDocs[i];
+      if (snap.exists()) {
+        const d = snap.data();
+        leaderDataByPath.set(ref.path, {
+          name: d.name || "N/A",
+          email: d.email || "N/A",
+          subgroup: d.subgroup || "N/A",
+        });
+      }
+    });
+
+    // 4) Filter & build teams
+    teamsWithRef.forEach(({ teamDoc, teamData, leaderRef }) => {
+      let leader = { name: "N/A", email: "N/A" };
+      let leaderSubgroup = "N/A";
+
+      if (leaderRef && leaderRef.path) {
+        const ld = leaderDataByPath.get(leaderRef.path);
+        if (ld) {
+          leader = { name: ld.name, email: ld.email };
+          leaderSubgroup = ld.subgroup;
+        }
+      }
+
+      if (!subgroupsUndertaking.includes(leaderSubgroup)) return;
+
+      let members = teamData.teamMembers || [];
+      if (
+        !Array.isArray(members) &&
+        typeof members === "object" &&
+        members !== null
+      ) {
         members = Object.values(members);
       }
 
@@ -262,13 +320,17 @@ export async function getAllTeamsForFaculty() {
         id: teamDoc.id,
         name: teamData.teamName,
         members,
-        leader: leaderData,
+        leader,
         subgroup: { name: leaderSubgroup },
       });
-    }
+    });
+
     return teams;
-  } catch (error) {
-    console.error("Error fetching all teams for faculty: ", error);
+  } catch (e) {
+    console.error("Error getAllTeamsForFaculty:", e);
     return [];
-  }
+  } 
+  // finally {
+  //   console.timeEnd("getAllTeamsForFaculty");
+  // }
 }

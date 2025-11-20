@@ -22,7 +22,16 @@ export default function StudentRegister() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const subgroupsUndertaking = ['3Q15', '3C24', '3Q26', '3P11', '3C16'];
+const subgroupsUndertaking = [
+  '3C51','3C55','3Q13','3Q14','3Q21',
+  '3C32','3C44','3C25','3Q11','3C22','3C35',
+  '3C31','3C53','3C73',
+  '3C33','3C42','3C54','3C63','3C65',
+  '3C45','3P14','3Q16','3C17','3C18',
+  '3C41','3C43','3C62','3C71',
+  '3Q12','3C72','3P12','3C34','3C13',
+  '3Q15','3C24','3Q26','3P11','3C16'
+];
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>

@@ -13,6 +13,9 @@ import {
   deleteDoc
 } from "firebase/firestore";
 
+import { getAllTeamsForFaculty } from './teams';
+
+
 /**
  * Creates a new project document with all submission details.
  */
@@ -136,175 +139,235 @@ export async function getProjectById(projectId) {
 }
 
 
-/**
- * Fetches all projects and populates team, leader, subgroup, and assignment data.
- * Designed for the faculty dashboard.
- */
-export async function getAllProjectsForFaculty() {
+export async function getAllProjectsForFaculty(facultyEmail) {
+  //console.time("getAllProjectsForFaculty");
   const projects = [];
+
+  if (!facultyEmail) {
+    console.error("getAllProjectsForFaculty: facultyEmail required");
+    return projects;
+  }
+
   try {
-    // 1. Fetch all assignments first
-    const assignmentsMap = new Map();
-    const assignQuery = query(collection(db, "assignments"));
-    const assignSnapshots = await getDocs(assignQuery);
-    
-    for (const assignDoc of assignSnapshots.docs) {
-      const assignData = assignDoc.data();
-      const projectId = assignData.projectId.id;
+    // 1. Load ALL assignments, but batch team lookups
+    const rawAssignments = [];
+    const teamRefMap = new Map();
 
-      if (!assignmentsMap.has(projectId)) {
-      assignmentsMap.set(projectId, []);
-    }
-      
-      let assignedToTeam = { id: null, name: "N/A" };
-      if (assignData.assignedToTeamId) {
-        const teamDoc = await getDoc(assignData.assignedToTeamId);
-        if (teamDoc.exists()) {
-          assignedToTeam = { id: teamDoc.id, name: teamDoc.data().teamName };
+    const assignSnap = await getDocs(query(collection(db, "assignments")));
+
+    assignSnap.docs.forEach((docSnap) => {
+      const data = docSnap.data();
+      const projectRef = data.projectId;
+      const projectId = projectRef && projectRef.id;
+      if (!projectId) return;
+
+      let assignedToTeamRef = null;
+      if (data.assignedToTeamId) {
+        const ref = ensureDocRef(data.assignedToTeamId) || data.assignedToTeamId;
+        if (ref && ref.path) {
+          assignedToTeamRef = ref;
+          teamRefMap.set(ref.path, ref);
         }
       }
-     // NEW: Push to the array
-      assignmentsMap.get(projectId).push({
-          id: assignDoc.id,
-          assignedTo: assignedToTeam,
-          status: assignData.status || "ASSIGNED", // Get status from assignment
+
+      rawAssignments.push({
+        id: docSnap.id,
+        projectId,
+        assignedToTeamRef,
+        status: data.status || "ASSIGNED",
       });
-    }
+    });
 
-    // 2. Fetch all projects
-    const projectsQuery = query(collection(db, "projects"));
-    const projectSnapshots = await getDocs(projectsQuery);
+    // Batch fetch all team docs
+    const uniqueRefs = Array.from(teamRefMap.values());
+    const teamDocs = await Promise.all(uniqueRefs.map((ref) => getDoc(ref)));
 
-    for (const projectDoc of projectSnapshots.docs) {
-      const projectData = projectDoc.data();
-      const projectId = projectDoc.id;
+    const teamDataByPath = new Map();
+    uniqueRefs.forEach((ref, i) => {
+      const snap = teamDocs[i];
+      if (snap.exists()) {
+        const d = snap.data();
+        teamDataByPath.set(ref.path, {
+          id: snap.id,
+          name: d.teamName || "N/A",
+        });
+      } else {
+        teamDataByPath.set(ref.path, { id: null, name: "N/A" });
+      }
+    });
 
-      // 3. Get Project's Team, Leader, and Subgroup
-      let team = { id: null, name: "N/A", leader: { name: "N/A", email: "N/A" }, subgroup: { name: "N/A" } };
-      if (projectData.teamId) {
-        const teamDoc = await getDoc(projectData.teamId); // This was the line with the error
-        if (teamDoc.exists()) {
-          const teamData = teamDoc.data();
-          let leaderData = { name: "N/A", email: "N/A" };
-          let leaderSubgroup = "N/A";
-          
-          if (teamData.teamLeader) {
-            const leaderDoc = await getDoc(teamData.teamLeader);
-            if (leaderDoc.exists()) {
-              const studentData = leaderDoc.data();
-              leaderData = { name: studentData.name, email: studentData.email };
-              leaderSubgroup = studentData.subgroup || "N/A";
-            }
-          }
-          team = {
-            id: teamDoc.id,
-            name: teamData.teamName,
-            leader: leaderData,
-            subgroup: { name: leaderSubgroup }
-          };
-        }
+    // Build projectId -> assignments[]
+    const assignmentsMap = new Map();
+
+    rawAssignments.forEach((a) => {
+      const arr = assignmentsMap.get(a.projectId) || [];
+
+      let assignedTo = { id: null, name: "N/A" };
+      if (a.assignedToTeamRef && a.assignedToTeamRef.path) {
+        const td = teamDataByPath.get(a.assignedToTeamRef.path);
+        if (td) assignedTo = td;
       }
 
-      // 4. Check for assignment
-      const assignments = assignmentsMap.get(projectId) || []; // Get array
+      arr.push({
+        id: a.id,
+        assignedTo,
+        status: a.status,
+      });
+
+      assignmentsMap.set(a.projectId, arr);
+    });
+
+    // 2. Allowed teams
+    const allowedTeams = await getAllTeamsForFaculty(facultyEmail);
+    const teamIdToTeam = new Map();
+    allowedTeams.forEach((t) => teamIdToTeam.set(t.id, t));
+
+    if (teamIdToTeam.size === 0) return projects;
+
+    // 3. Fetch all projects
+    const projectSnap = await getDocs(query(collection(db, "projects")));
+
+    projectSnap.docs.forEach((projSnap) => {
+      const data = projSnap.data();
+      const projectId = projSnap.id;
+
+      const teamId =
+        getTeamIdFromRefOrPath(data.teamId) ||
+        getTeamIdFromRefOrPath(data.team) ||
+        getTeamIdFromRefOrPath(data.teamRef);
+
+      if (!teamId || !teamIdToTeam.has(teamId)) return;
+
+      const team = teamIdToTeam.get(teamId);
+      const assignments = assignmentsMap.get(projectId) || [];
 
       projects.push({
         id: projectId,
-        title: projectData.title,
-        status: assignments.length > 0 ? "ASSIGNED" : (projectData.status || "UNASSIGNED"),
-        testAssignments: assignments, // Note the plural 's'
-        deployedLink: projectData.deployedLink,
-        githubLink: projectData.githubLink,
-        team: team,
+        title: data.title,
+        status:
+          assignments.length > 0
+            ? "ASSIGNED"
+            : data.status || "UNASSIGNED",
+        testAssignments: assignments,
+        deployedLink: data.deployedLink,
+        githubLink: data.githubLink,
+        team,
+      });
+    });
+
+    return projects;
+  } catch (e) {
+    console.error("Error getAllProjectsForFaculty:", e);
+    return [];
+  } 
+  // finally {
+  //   console.timeEnd("getAllProjectsForFaculty");
+  // }
+}
+
+
+
+// Helper to turn a string path into a DocumentReference
+function ensureDocRef(maybePathOrRef) {
+  if (!maybePathOrRef) return null;
+
+  if (typeof maybePathOrRef === 'string') {
+    const path = maybePathOrRef.startsWith('/')
+      ? maybePathOrRef.slice(1)
+      : maybePathOrRef;
+    const [col, id] = path.split('/');
+    if (col && id) return doc(db, col, id);
+    return null;
+  }
+
+  if (
+    typeof maybePathOrRef === 'object' &&
+    maybePathOrRef !== null &&
+    ('path' in maybePathOrRef || 'id' in maybePathOrRef)
+  ) {
+    return maybePathOrRef;
+  }
+
+  return null;
+}
+
+export async function getAllProjectsForFacultyDashboard(facultyEmail) {
+  const projects = [];
+
+  if (!facultyEmail) {
+    console.error('getAllProjectsForFacultyDashboard: facultyEmail is required');
+    return projects;
+  }
+
+  try {
+    // 1) Get all teams this faculty is allowed to see
+    const allowedTeams = await getAllTeamsForFaculty(facultyEmail);
+    const teamIdToTeam = new Map();
+    const allowedTeamIds = new Set();
+
+    (allowedTeams || []).forEach((team) => {
+      if (!team || !team.id) return;
+      allowedTeamIds.add(team.id);
+      teamIdToTeam.set(team.id, team); // contains leader + subgroup already
+    });
+
+    if (allowedTeamIds.size === 0) {
+      console.warn(
+        `getAllProjectsForFacultyDashboard: faculty ${facultyEmail} has no teams`
+      );
+      return projects;
+    }
+
+    // 2) Fetch all projects and keep only those belonging to allowed teams
+    const projQ = query(collection(db, 'projects'));
+    const projSnap = await getDocs(projQ);
+
+    for (const pDoc of projSnap.docs) {
+      const data = pDoc.data() || {};
+
+      // Try multiple possible fields for the team link
+      const teamId =
+        getTeamIdFromRefOrPath(data.team) ||
+        getTeamIdFromRefOrPath(data.teamRef) ||
+        getTeamIdFromRefOrPath(data.teamId);
+
+      if (!teamId || !allowedTeamIds.has(teamId)) {
+        // project not in this faculty's subgroups
+        continue;
+      }
+
+      const teamInfo = teamIdToTeam.get(teamId);
+
+      projects.push({
+        id: pDoc.id,
+        title: data.title,
+        description: data.description || '',
+        status: data.status || 'UNASSIGNED',
+        team: teamInfo
+          ? {
+              id: teamInfo.id,
+              name: teamInfo.name,
+              leader: teamInfo.leader,
+              subgroup: teamInfo.subgroup || { name: 'N/A' },
+            }
+          : {
+              // fallback if for some reason team is not found in map
+              id: teamId,
+              name: data.teamName || 'Unknown Team',
+              leader: { id: '', name: 'N/A', email: 'N/A' },
+              subgroup: { name: 'N/A' },
+            },
+        deployedLink: data.deployedLink || '',
+        githubLink: data.githubLink || '',
       });
     }
+
     return projects;
-  } catch (error) {
-    console.error("Error fetching all projects for faculty: ", error);
+  } catch (err) {
+    console.error('Error in getAllProjectsForFacultyDashboard:', err);
     return [];
   }
 }
-
-export async function getAllProjectsForFacultyDashboard() {
-    const projects = [];
-    try {
-        // 1. Fetch all assignments first
-        const assignmentsMap = new Map();
-        const assignQuery = query(collection(db, "assignments"));
-        const assignSnapshots = await getDocs(assignQuery);
-        
-        for (const assignDoc of assignSnapshots.docs) {
-            const assignData = assignDoc.data();
-            const projectId = assignData.projectId.id;
-            
-            let assignedToTeam = { id: null, name: "N/A" };
-            if (assignData.assignedToTeamId) {
-                const teamDoc = await getDoc(assignData.assignedToTeamId);
-                if (teamDoc.exists()) {
-                    assignedToTeam = { id: teamDoc.id, name: teamDoc.data().teamName };
-                }
-            }
-            assignmentsMap.set(projectId, {
-                id: assignDoc.id,
-                assignedTo: assignedToTeam,
-                status: assignData.status || "ASSIGNED",
-            });
-        }
-
-        // 2. Fetch all projects
-        const projectsQuery = query(collection(db, "projects"));
-        const projectSnapshots = await getDocs(projectsQuery);
-
-        for (const projectDoc of projectSnapshots.docs) {
-            const projectData = projectDoc.data();
-            const projectId = projectDoc.id;
-
-            // 3. Get Project's Team, Leader, and Subgroup
-            let team = { id: null, name: "N/A", leader: { name: "N/A", email: "N/A" }, subgroup: { name: "N/A" } };
-            if (projectData.teamId) {
-                const teamDoc = await getDoc(projectData.teamId);
-                if (teamDoc.exists()) {
-                    const teamData = teamDoc.data();
-                    let leaderData = { name: "N/A", email: "N/A" };
-                    let leaderSubgroup = "N/A";
-
-                    if (teamData.teamLeader) {
-                        const leaderDoc = await getDoc(teamData.teamLeader);
-                        if (leaderDoc.exists()) {
-                            const studentData = leaderDoc.data();
-                            leaderData = { name: studentData.name, email: studentData.email };
-                            leaderSubgroup = studentData.subgroup || "N/A";
-                        }
-                    }
-                    team = {
-                        id: teamDoc.id,
-                        name: teamData.teamName,
-                        leader: leaderData,
-                        subgroup: { name: leaderSubgroup }
-                    };
-                }
-            }
-
-            // 4. Check for assignment
-            const assignment = assignmentsMap.get(projectId);
-
-            projects.push({
-                id: projectId,
-                title: projectData.title,
-                status: projectData.status || (assignment ? assignment.status : "UNASSIGNED"),
-                deployedLink: projectData.deployedLink,
-                githubLink: projectData.githubLink,
-                team: team,
-                testAssignment: assignment,
-            });
-        }
-        return projects;
-    } catch (error) {
-        console.error("Error fetching all projects for faculty: ", error);
-        return [];
-    }
-}
-
 
 export async function getProjectsAssignedToTeam(teamId) {
   const projectsToTest = [];
@@ -470,4 +533,25 @@ export async function updateProjectLink(projectId, newLink) {
         console.error("Error updating project link: ", error);
         return false;
     }
+}
+
+// Helper: get an ID from a doc ref / path / plain string
+function getTeamIdFromRefOrPath(value) {
+  if (!value) return null;
+
+  if (typeof value === 'string') {
+    const path = value.startsWith('/') ? value.slice(1) : value;
+    const segments = path.split('/');
+    return segments[segments.length - 1] || null;
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    if (typeof value.id === 'string') return value.id;
+    if (typeof value.path === 'string') {
+      const segments = value.path.split('/');
+      return segments[segments.length - 1] || null;
+    }
+  }
+
+  return null;
 }

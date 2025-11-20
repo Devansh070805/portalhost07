@@ -152,6 +152,26 @@ function ReportCard({ report, role, onDataMutate }: ReportCardProps) {
         }
     };
 
+const formatTimestamp = (ts: any) => {
+  const d =
+    ts?.toDate?.() ||
+    (typeof ts?.seconds === "number"
+      ? new Date(ts.seconds * 1000 + ts.nanoseconds / 1e6)
+      : ts);
+
+  if (!(d instanceof Date)) return "—";
+
+  return d.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+
+
     const getStatusInfo = () => {
         switch (report.status) {
             case 'OPEN':
@@ -211,6 +231,7 @@ function ReportCard({ report, role, onDataMutate }: ReportCardProps) {
                 </span>
             </div>
 
+            
             {/* Logs / History */}
             <div className="mb-4">
                 <h4 className="font-medium text-gray-800 mb-2 text-sm">History:</h4>
@@ -224,7 +245,7 @@ function ReportCard({ report, role, onDataMutate }: ReportCardProps) {
                             )}
                             <p className="text-xs text-gray-400 mt-0.5">
                                 {/* @ts-ignore */}
-                                {new Date(log.timestamp?.toDate()).toLocaleString()}
+                                 {formatTimestamp(log.timestamp)}
                             </p>
                         </div>
                     ))}
