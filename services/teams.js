@@ -1,4 +1,4 @@
-// services/teams.js  (replace your current file with this)
+// services/teams.js
 import { db } from './firebaseConfig.js';
 import { 
   collection, 
@@ -65,8 +65,8 @@ export async function createTeam(teamName, leaderAuthId, memberAuthIds) {
 /**
  * Gets a single team's details from its ID.
  * Normalizes:
- *  - teamMembers -> Array (if object with numeric keys we convert via Object.values)
- *  - teamLeader -> DocumentReference when possible (if stored as string path we convert)
+ * - teamMembers -> Array (if object with numeric keys we convert via Object.values)
+ * - teamLeader -> DocumentReference when possible (if stored as string path we convert)
  */
 export async function getTeamDetails(teamId) {
   try {
@@ -108,10 +108,10 @@ export async function getTeamDetails(teamId) {
 /**
  * Fetches the full details for a list of student references.
  * Accepts:
- *  - an array of DocumentReference objects,
- *  - an array of strings like "/students/abc" or "students/abc",
- *  - an object with numeric keys (will be converted to array),
- *  - or a mixed array.
+ * - an array of DocumentReference objects,
+ * - an array of strings like "/students/abc" or "students/abc",
+ * - an object with numeric keys (will be converted to array),
+ * - or a mixed array.
  *
  * Returns array of { id, name, email, type } with defaults for missing docs.
  */
@@ -330,7 +330,48 @@ export async function getAllTeamsForFaculty(facultyEmail) {
     console.error("Error getAllTeamsForFaculty:", e);
     return [];
   } 
-  // finally {
-  //   console.timeEnd("getAllTeamsForFaculty");
-  // }
+}
+
+/**
+ * NEW HELPER: Identifies the faculty email responsible for a given team
+ * by looking up the Team Leader -> Leader's Subgroup -> Faculty undertaking that subgroup.
+ */
+export async function getFacultyEmailForTeam(teamId) {
+  try {
+    // 1. Get Team Data
+    const teamRef = doc(db, "teams", teamId);
+    const teamSnap = await getDoc(teamRef);
+    if (!teamSnap.exists()) return null;
+    
+    const teamData = teamSnap.data();
+    
+    // 2. Get Leader to find Subgroup
+    // Use ensureDocRef to handle cases where teamLeader is a string or ref
+    let leaderRef = teamData.teamLeader; 
+    leaderRef = ensureDocRef(leaderRef);
+
+    if (!leaderRef) return null;
+
+    const leaderSnap = await getDoc(leaderRef);
+    if (!leaderSnap.exists()) return null;
+    
+    const subgroup = leaderSnap.data().subgroup; // e.g., "3C51"
+    if (!subgroup) return null;
+
+    // 3. Find Faculty who manages this subgroup
+    const q = query(
+        collection(db, "faculty"),
+        where("subgroupsUndertaking", "array-contains", subgroup)
+    );
+    
+    const facultySnap = await getDocs(q);
+    if (facultySnap.empty) return null;
+
+    // Return the first matching faculty's email
+    return facultySnap.docs[0].data().email;
+
+  } catch (error) {
+    console.error("Error finding faculty for team:", error);
+    return null;
+  }
 }

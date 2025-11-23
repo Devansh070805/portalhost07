@@ -8,7 +8,8 @@ import {
   collection,
   query,
   where,
-  getDocs
+  getDocs,
+  writeBatch,        // <-- NEW (for seeding helper)
 } from "firebase/firestore";
 
 // Global fallback (for old behaviour / if no faculty found)
@@ -50,8 +51,45 @@ async function getSettingsRefForFaculty(facultyEmail) {
 }
 
 /**
+ * Ensure a settings document exists for the given ref.
+ * If it doesn't exist, create it with default values.
+ *
+ * @param {import("firebase/firestore").DocumentReference} settingsRef
+ * @returns {Promise<{allowsSubmission: boolean, deadline: Timestamp | null}>}
+ */
+async function ensureSettingsDoc(settingsRef, facultyEmail) {
+  const snap = await getDoc(settingsRef);
+
+  if (!snap.exists()) {
+    const defaultData = {
+      allowsSubmission: true,
+      deadline: null,
+      facultyEmail: facultyEmail || null, // <--- NEW FIELD
+    };
+    await setDoc(settingsRef, defaultData, { merge: true });
+    return defaultData;
+  }
+
+  const existing = snap.data();
+
+  // If facultyEmail field is missing, patch it in
+  if (!('facultyEmail' in existing)) {
+    const patched = {
+      ...existing,
+      facultyEmail: facultyEmail || null,
+    };
+    await setDoc(settingsRef, patched, { merge: true });
+    return patched;
+  }
+
+  return existing;
+}
+
+/**
  * Gets the submission settings for a given faculty.
  * If facultyEmail is omitted or faculty not found, uses the global settings doc.
+ *
+ * This will now ALSO create a doc for that faculty/global if it doesn't exist yet.
  *
  * @param {string} [facultyEmail]
  * @returns {Promise<{allowsSubmission: boolean, deadline: Timestamp | null}>}
@@ -59,19 +97,14 @@ async function getSettingsRefForFaculty(facultyEmail) {
 export async function getSubmissionSettings(facultyEmail) {
   try {
     const settingsRef = await getSettingsRefForFaculty(facultyEmail);
-    const docSnap = await getDoc(settingsRef);
-
-    if (docSnap.exists()) {
-      return docSnap.data();
-    } else {
-      // Default settings if document doesn't exist
-      return { allowsSubmission: true, deadline: null };
-    }
+    const data = await ensureSettingsDoc(settingsRef, facultyEmail);
+    return data;
   } catch (error) {
     console.error("Error fetching submission settings: ", error);
-    return { allowsSubmission: true, deadline: null };
+    return { allowsSubmission: true, deadline: null, facultyEmail: null };
   }
 }
+
 
 /**
  * Sets the submission deadline for the given faculty.
@@ -84,14 +117,17 @@ export async function setSubmissionDeadline(deadlineDate, facultyEmail) {
   try {
     const settingsRef = await getSettingsRefForFaculty(facultyEmail);
     const deadlineTimestamp = Timestamp.fromDate(deadlineDate);
+
     await setDoc(
       settingsRef,
       {
         allowsSubmission: true,
-        deadline: deadlineTimestamp
+        deadline: deadlineTimestamp,
+        facultyEmail: facultyEmail || null,
       },
       { merge: true }
     );
+
     console.log("Submission deadline set.");
     return true;
   } catch (error) {
@@ -135,14 +171,16 @@ export async function toggleSubmissions(isAllowed, facultyEmail) {
 export async function clearSubmissionDeadline(facultyEmail) {
   try {
     const settingsRef = await getSettingsRefForFaculty(facultyEmail);
-    await setDoc(
+       await setDoc(
       settingsRef,
       {
         allowsSubmission: true,
-        deadline: null
+        deadline: null,
+        facultyEmail: facultyEmail || null, // <--- NEW FIELD
       },
       { merge: true }
     );
+
     console.log("Submission deadline cleared.");
     return true;
   } catch (error) {
@@ -150,3 +188,42 @@ export async function clearSubmissionDeadline(facultyEmail) {
     return false;
   }
 }
+
+/**
+ * OPTIONAL: Seed settings documents for every faculty that exists.
+ * Call this once from an admin script / page if you want to eagerly
+ * create settings/{facultyDocId} for all faculty.
+ */
+export async function initializeSettingsForAllFaculty() {
+  try {
+    const facultySnap = await getDocs(collection(db, 'faculty'));
+
+    const batch = writeBatch(db);
+    facultySnap.forEach((facultyDoc) => {
+      const facData = facultyDoc.data();
+      const facultyEmail = facData?.email || null;
+
+      const settingsRef = doc(db, 'settings', facultyDoc.id);
+      batch.set(
+        settingsRef,
+        {
+          allowsSubmission: true,
+          deadline: null,
+          facultyEmail, // <--- NEW FIELD
+        },
+        { merge: true }
+      );
+    });
+
+
+    await batch.commit();
+    console.log('Initialized settings docs for all faculty.');
+    return true;
+  } catch (error) {
+    console.error('Error initializing settings for all faculty: ', error);
+    return false;
+  }
+}
+
+
+
