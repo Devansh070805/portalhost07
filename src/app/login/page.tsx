@@ -298,8 +298,8 @@ export default function LoginPage() {
                                     />
                                 </div>
 
-                                {/* Forgot Password (Students Only) */}
-                                {userType === 'student' && (
+                                {/* Forgot Password (Students Only) also for faculty now */}
+                                
                                     <div className="text-right -mt-2">
                                         <button
                                             type="button"
@@ -310,7 +310,7 @@ export default function LoginPage() {
                                             Forgot your password?
                                         </button>
                                     </div>
-                                )}
+                                
 
                                 {successMessage && (
                                     <div className="bg-green-50 border-2 border-green-300 rounded-lg p-3">
