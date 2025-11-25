@@ -28,6 +28,7 @@ const FACULTY_EMAILS: Record<string, string> = {
     "Raghav B": "bv.raghav@thapar.edu",
     "Komal Bharti": "komal.bharti@thapar.edu",
     "Sukhpal Singh": "ssingh1_phd23@thapar.edu",
+    "Damini":"darora_phd23@thapar.edu",
     "Ashima": "ashima@thapar.edu",
     "Admin":"portaltesting733@gmail.com",
 };
